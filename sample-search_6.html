@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>sales samples</title>
+<!--
+  Reads the published-to-web CSV export of the Google Sheet that sits behind
+  the shared submission Form (see sample-log.html's FORM_CONFIG). No sign-in
+  needed — a published sheet is publicly readable by URL. No backend, no
+  Drive API.
+-->
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#000;color:#e8e8e8;font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;
+    font-size:14px;line-height:1.5;padding:24px 16px 80px}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-size:16px;font-weight:700;margin:0 0 4px;text-transform:uppercase;letter-spacing:1px}
+  .sub{color:#888;margin:0 0 20px;font-size:12px}
+  hr{border:none;border-top:1px solid #333;margin:18px 0}
+  a{color:#e8e8e8}
+  a:hover{color:#fff}
+
+  input{width:100%;background:#000;border:1px solid #444;color:#e8e8e8;
+    font-family:inherit;font-size:13px;padding:8px 9px}
+  input:focus{outline:1px solid #999;border-color:#999}
+
+  button{background:#000;color:#e8e8e8;border:1px solid #444;
+    padding:6px 12px;font-family:inherit;font-size:11px;text-transform:uppercase;letter-spacing:.5px;cursor:pointer}
+  button:hover{border-color:#999}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:1px;background:#333;margin-top:16px}
+  .cell{background:#000;padding:14px 12px;cursor:pointer}
+  .cell:hover{background:#111}
+  .cell .ind{font-weight:700;text-transform:uppercase;font-size:12px}
+  .cell .aud{color:#999;font-size:11px;margin-top:2px}
+  .cell .count{color:#666;font-size:10px;margin-top:8px}
+  .cell.empty{opacity:.4;cursor:default}
+  .cell.empty:hover{background:#000}
+
+  .empty-msg{color:#666;padding:40px 0;text-align:center;font-size:12px}
+
+  table{width:100%;border-collapse:collapse;margin-top:14px;font-size:12px}
+  th,td{border:1px solid #333;padding:6px 8px;text-align:left;vertical-align:top}
+  th{color:#999;font-weight:400;text-transform:uppercase;font-size:10px;letter-spacing:.5px}
+  tr.stale td{color:#f88}
+  tr.stale td:first-child::before{content:"! ";color:#f88}
+
+  .breadcrumb{font-size:11px;color:#888;margin-top:4px}
+  .breadcrumb button{margin-right:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>sales sample search</h1>
+  <p class="sub">Browse by industry / audience, then pick a call by offer.</p>
+
+  <input type="text" id="q" placeholder="search industry, audience, offer, or agent...">
+
+  <div id="view"></div>
+</div>
+
+<script>
+"use strict";
+const AGE_ALERT_DAYS = 60;
+const $ = id => document.getElementById(id);
+
+/* ======================= SHARED DATA SOURCE (published CSV) ===============
+   Reads the response sheet behind the Google Form that sample-log.html
+   submits to (File -> Share -> Publish to web -> CSV, on that sheet).
+   No sign-in needed to read a published sheet. Since the Form appends a
+   new row on every submission rather than overwriting, this page groups
+   rows by call type (industry+audience+offer) and keeps only the most
+   recent one by call date — same "one champion per call type" behavior
+   the log page enforces locally. */
+const CSV_URL = 'https://docs.google.com/spreadsheets/d/1ccSCmGcoIyacc-UcZD9EztkupVDViEU7oqjtE634Rjs/export?format=csv&gid=1317295187';
+
+function parseCsv(text){
+  var rows=[],row=[],f='',q=false;
+  for(var i=0;i<text.length;i++){var c=text[i];
+    if(q){if(c==='"'&&text[i+1]==='"'){f+='"';i++;}else if(c==='"')q=false;else f+=c;}
+    else if(c==='"')q=true;else if(c===','){row.push(f);f='';}
+    else if(c==='\n'){row.push(f);rows.push(row);row=[];f='';}
+    else if(c!=='\r')f+=c;}
+  if(f.length||row.length){row.push(f);rows.push(row);}
+  return rows.filter(r=>r.length>1&&r.some(c=>c!==''));
+}
+
+/* Matches columns by their header text (the Form question titles) rather
+   than fixed position — robust regardless of what order the questions were
+   added in. Expects a "Timestamp" column plus columns whose names contain
+   these words, case-insensitive: link, agent, date, industry, audience,
+   offer, grade, note. Duration isn't a form field — it's read live from
+   each audio file's own metadata, see driveDirectUrl_/getDuration_. */
+function csvRowsToRecords(rows){
+  if (rows.length < 2) return [];
+  const header = rows[0].map(h => h.toLowerCase());
+  const idx = word => header.findIndex(h => h.indexOf(word) >= 0);
+  const col = { logged_at: 0, link: idx('link'), agent: idx('agent'), date: idx('date'),
+    ind: idx('industry'), aud: idx('audience'), off: idx('offer'), grade: idx('grade'), note: idx('note') };
+  return rows.slice(1).map(r => ({
+    logged_at: r[col.logged_at]||'', link: r[col.link]||'', agent: r[col.agent]||'', date: r[col.date]||'',
+    ind: r[col.ind]||'', aud: r[col.aud]||'', off: r[col.off]||'', grade: r[col.grade]||'', note: r[col.note]||'',
+  })).filter(r => r.link);
+}
+
+/* Keep only the newest row per (ind, aud, off) call type. Timestamp column
+   comes from Google Forms as M/D/YYYY H:MM:SS, so it's parsed as a real
+   Date for the tie-break rather than compared as a string (lexicographic
+   comparison of that format is wrong, e.g. "8/9/2026" > "8/26/2026"). */
+function loggedAtMs_(s){
+  const t = Date.parse(s || '');
+  return isNaN(t) ? 0 : t;
+}
+function dedupeToChampions(records){
+  const byType = {};
+  records.forEach(r => {
+    const key = r.ind+'|||'+r.aud+'|||'+r.off;
+    const existing = byType[key];
+    if (!existing || (r.date||'') > (existing.date||'') ||
+        ((r.date||'')===(existing.date||'') && loggedAtMs_(r.logged_at) > loggedAtMs_(existing.logged_at))) {
+      byType[key] = r;
+    }
+  });
+  return Object.values(byType);
+}
+
+let SOURCE_ROWS = [];
+let LOAD_ERROR = null;
+
+/* ======================= LIVE DURATION LOOKUP ==============================
+   Drive's normal share link (.../file/d/ID/view) is a viewer PAGE, not a
+   playable audio stream. Converting it to the direct-content URL lets an
+   <audio> element load just enough to read .duration — this works without
+   any sign-in, but ONLY if the file is shared "Anyone with the link" as a
+   viewer. Best-effort: on any failure (private file, blocked interstitial,
+   Drive changing this URL format) it just falls back to a dash rather than
+   breaking the page. Results are cached per file for the session. */
+function driveDirectUrl_(shareLink){
+  const m = String(shareLink||'').match(/\/d\/([a-zA-Z0-9_-]+)/) || String(shareLink||'').match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (!m) return null;
+  return 'https://drive.google.com/uc?export=download&id=' + m[1];
+}
+const durationCache = {};
+function getDuration_(shareLink, cellEl){
+  const direct = driveDirectUrl_(shareLink);
+  if (!direct) { cellEl.textContent = '\u2014'; return; }
+  if (durationCache[direct] !== undefined) { cellEl.textContent = durationCache[direct]; return; }
+  const audio = document.createElement('audio');
+  audio.preload = 'metadata';
+  audio.src = direct;
+  audio.addEventListener('loadedmetadata', () => {
+    const s = Math.round(audio.duration);
+    const fmt = isFinite(s) ? Math.floor(s/60) + ':' + String(s%60).padStart(2,'0') : '\u2014';
+    durationCache[direct] = fmt;
+    cellEl.textContent = fmt;
+  });
+  audio.addEventListener('error', () => { durationCache[direct] = '\u2014'; cellEl.textContent = '\u2014'; });
+}
+
+let LAST_DIAGNOSTIC = null;
+
+function loadFromSheet(){
+  if (CSV_URL.indexOf('PASTE_') === 0) {
+    $('view').innerHTML = '<div class="empty-msg">shared sheet not configured yet — set CSV_URL at the top of this file</div>';
+    return Promise.resolve();
+  }
+  return fetch(CSV_URL, { cache: 'no-store' })
+    .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
+    .then(text => {
+      const rows = parseCsv(text);
+      const records = csvRowsToRecords(rows);
+      LAST_DIAGNOSTIC = {
+        rawRowCount: rows.length,
+        headers: rows[0] || [],
+        parsedCount: records.length,
+        sampleRawRow: rows[1] || null,
+      };
+      SOURCE_ROWS = dedupeToChampions(records);
+      LOAD_ERROR = null;
+    })
+    .catch(err => {
+      SOURCE_ROWS = [];
+      LAST_DIAGNOSTIC = null;
+      LOAD_ERROR = err.message || String(err);
+    });
+}
+
+function load(){ return SOURCE_ROWS; }
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function titleCase(s){return String(s||'').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());}
+function ageDays(dateStr){
+  if(!dateStr) return null;
+  const d = new Date(dateStr + 'T00:00:00'); if (isNaN(d)) return null;
+  return Math.floor((Date.now()-d.getTime())/86400000);
+}
+function searchable(r){ return [r.ind,r.aud,r.off,r.agent].filter(Boolean).join(' ').toLowerCase(); }
+
+const GRADE_RANK = { A:0, B:1, C:2, D:3, F:4 };
+let selected = null; // {ind, aud} or null for grid view
+
+function render(){
+  const q = ($('q').value||'').toLowerCase();
+  let rows = load();
+  if (q) rows = rows.filter(r => searchable(r).indexOf(q) >= 0);
+
+  if (!rows.length) {
+    if (LOAD_ERROR) {
+      $('view').innerHTML = '<div class="empty-msg">could not load the shared sheet (' + esc(LOAD_ERROR) + ')</div>';
+    } else if (q) {
+      $('view').innerHTML = '<div class="empty-msg">nothing logged yet for that search</div>';
+    } else if (LAST_DIAGNOSTIC && LAST_DIAGNOSTIC.rawRowCount > 1 && LAST_DIAGNOSTIC.parsedCount === 0) {
+      // Fetch worked and the sheet has data rows, but none survived column
+      // matching — almost always means the header text doesn't contain the
+      // expected keywords. Show exactly what was found instead of a dead end.
+      $('view').innerHTML = '<div class="empty-msg" style="text-align:left;max-width:700px;margin:20px auto">'+
+        '<b>Loaded ' + (LAST_DIAGNOSTIC.rawRowCount-1) + ' row(s) from the sheet, but none matched expected columns.</b><br><br>'+
+        'Header row found:<br>' + LAST_DIAGNOSTIC.headers.map((h,i) => (i+1)+'. "'+esc(h)+'"').join('<br>') +
+        (LAST_DIAGNOSTIC.sampleRawRow ? '<br><br>First data row:<br>' + LAST_DIAGNOSTIC.sampleRawRow.map((v,i) => (i+1)+'. "'+esc(v)+'"').join('<br>') : '') +
+        '<br><br>Send me this list and I\'ll fix the column matching to use the real headers.'+
+        '</div>';
+    } else if (LAST_DIAGNOSTIC && LAST_DIAGNOSTIC.rawRowCount <= 1) {
+      $('view').innerHTML = '<div class="empty-msg">the sheet loaded fine but has no submitted rows yet (only a header row, or empty)</div>';
+    } else {
+      $('view').innerHTML = '<div class="empty-msg">nothing logged yet</div>';
+    }
+    return;
+  }
+
+  if (selected) {
+    renderList(rows);
+  } else {
+    renderGrid(rows);
+  }
+}
+
+function renderGrid(rows){
+  const pairs = {}; // "ind|||aud" -> array of rows
+  rows.forEach(r => {
+    const key = r.ind + '|||' + r.aud;
+    (pairs[key] = pairs[key] || []).push(r);
+  });
+  const keys = Object.keys(pairs).sort();
+
+  let html = '<div class="grid">';
+  keys.forEach(key => {
+    const [ind, aud] = key.split('|||');
+    const n = pairs[key].length;
+    html += '<div class="cell" data-key="'+esc(key)+'">'+
+      '<div class="ind">'+esc(titleCase(ind))+'</div>'+
+      '<div class="aud">'+esc(titleCase(aud))+'</div>'+
+      '<div class="count">'+n+' call'+(n===1?'':'s')+'</div>'+
+      '</div>';
+  });
+  html += '</div>';
+  $('view').innerHTML = html;
+
+  document.querySelectorAll('.cell').forEach(el => {
+    el.addEventListener('click', () => {
+      const [ind, aud] = el.getAttribute('data-key').split('|||');
+      selected = { ind, aud };
+      render();
+    });
+  });
+}
+
+function renderList(rows){
+  const forPair = rows.filter(r => r.ind === selected.ind && r.aud === selected.aud);
+  let html = '<div class="breadcrumb"><button id="backBtn">&larr; back</button>'+
+    esc(titleCase(selected.ind)) + ' / ' + esc(titleCase(selected.aud)) + '</div>';
+
+  if (!forPair.length) {
+    html += '<div class="empty-msg">no calls logged for this combination</div>';
+  } else {
+    forPair.sort((a,b) => {
+      const ga = GRADE_RANK[a.grade] !== undefined ? GRADE_RANK[a.grade] : 9;
+      const gb = GRADE_RANK[b.grade] !== undefined ? GRADE_RANK[b.grade] : 9;
+      if (ga !== gb) return ga - gb;
+      return (b.date||'').localeCompare(a.date||'');
+    });
+
+    html += '<table><tr><th>offer</th><th>agent</th><th>grade</th><th>duration</th><th>age</th><th>link</th><th>summary</th></tr>';
+    forPair.forEach((r, i) => {
+      const age = ageDays(r.date);
+      const stale = age !== null && age >= AGE_ALERT_DAYS;
+      html += '<tr class="'+(stale?'stale':'')+'">'+
+        '<td>'+esc(titleCase(r.off))+'</td>'+
+        '<td>'+esc(r.agent||'\u2014')+'</td>'+
+        '<td>'+esc(r.grade||'\u2014')+'</td>'+
+        '<td id="dur'+i+'">\u2026</td>'+
+        '<td>'+(age===null?'\u2014':age+'d')+'</td>'+
+        '<td><a href="'+esc(r.link)+'" target="_blank" rel="noopener">open</a></td>'+
+        '<td>'+esc(r.note||'')+'</td>'+
+        '</tr>';
+    });
+    html += '</table>';
+  }
+
+  $('view').innerHTML = html;
+  $('backBtn').addEventListener('click', () => { selected = null; render(); });
+  forPair.forEach((r, i) => { const cell = $('dur'+i); if (cell) getDuration_(r.link, cell); });
+}
+
+$('q').addEventListener('input', render);
+$('view').innerHTML = '<div class="empty-msg">loading...</div>';
+loadFromSheet().then(render);
+</script>
+</body>
+</html>
