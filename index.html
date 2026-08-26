@@ -73,7 +73,7 @@ const $ = id => document.getElementById(id);
    rows by call type (industry+audience+offer) and keeps only the most
    recent one by call date — same "one champion per call type" behavior
    the log page enforces locally. */
-const CSV_URL = 'https://docs.google.com/spreadsheets/d/1ccSCmGcoIyacc-UcZD9EztkupVDViEU7oqjtE634Rjs/export?format=csv&gid=1317295187';
+const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRT6sX6uL-Rv_t-FCAzWGn96-OkhCFyF7ELzXlvDqYuIhvuR0_Cyr2akbbGxvm5alDTPopJf8IV9nmG/pub?gid=1317295187&single=true&output=csv';
 
 function parseCsv(text){
   var rows=[],row=[],f='',q=false;
@@ -236,26 +236,39 @@ function render(){
 
 function renderGrid(rows){
   const pairs = {}; // "ind|||aud" -> array of rows
+  const inds = new Set(), auds = new Set();
   rows.forEach(r => {
     const key = r.ind + '|||' + r.aud;
     (pairs[key] = pairs[key] || []).push(r);
+    inds.add(r.ind); auds.add(r.aud);
   });
-  const keys = Object.keys(pairs).sort();
+  const indList = Array.from(inds).sort();
+  const audList = Array.from(auds).sort();
 
   let html = '<div class="grid">';
-  keys.forEach(key => {
-    const [ind, aud] = key.split('|||');
-    const n = pairs[key].length;
-    html += '<div class="cell" data-key="'+esc(key)+'">'+
-      '<div class="ind">'+esc(titleCase(ind))+'</div>'+
-      '<div class="aud">'+esc(titleCase(aud))+'</div>'+
-      '<div class="count">'+n+' call'+(n===1?'':'s')+'</div>'+
-      '</div>';
+  indList.forEach(ind => {
+    audList.forEach(aud => {
+      const key = ind + '|||' + aud;
+      const n = (pairs[key] || []).length;
+      if (n === 0) {
+        html += '<div class="cell empty">'+
+          '<div class="ind">'+esc(titleCase(ind))+'</div>'+
+          '<div class="aud">'+esc(titleCase(aud))+'</div>'+
+          '<div class="count">0 calls</div>'+
+          '</div>';
+      } else {
+        html += '<div class="cell" data-key="'+esc(key)+'">'+
+          '<div class="ind">'+esc(titleCase(ind))+'</div>'+
+          '<div class="aud">'+esc(titleCase(aud))+'</div>'+
+          '<div class="count">'+n+' call'+(n===1?'':'s')+'</div>'+
+          '</div>';
+      }
+    });
   });
   html += '</div>';
   $('view').innerHTML = html;
 
-  document.querySelectorAll('.cell').forEach(el => {
+  document.querySelectorAll('.cell:not(.empty)').forEach(el => {
     el.addEventListener('click', () => {
       const [ind, aud] = el.getAttribute('data-key').split('|||');
       selected = { ind, aud };
