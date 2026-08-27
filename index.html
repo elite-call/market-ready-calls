@@ -337,6 +337,17 @@ function sortBy(key){
   render();
 }
 
+function downloadRealFile_(r){
+  const direct = driveDirectUrl_(r.link);
+  if (!direct) return;
+  const a = document.createElement('a');
+  a.href = direct;
+  a.download = fileName(r);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 function startDownload(r){
   clearInterval(window.__dlTimer); clearTimeout(window.__dlTimer2);
   state.dl = { link: r.link, file: fileName(r), pct: 0, done: false };
@@ -348,6 +359,7 @@ function startDownload(r){
       clearInterval(window.__dlTimer);
       state.dl.pct = 100; state.dl.done = true;
       updateDownloadModal_(); // in-place update, no re-mount
+      downloadRealFile_(r); // the progress bar was decorative, but the file is real
       window.__dlTimer2 = setTimeout(() => { state.dl = null; render(); }, 1100); // unmount
     } else {
       state.dl.pct = next;
@@ -715,106 +727,145 @@ app.innerHTML = '<div class="empty-state">loading…</div>';
 loadFromSheet().then(render);
 
 /* ======================= RETRO PIXEL CURSOR ======================= */
-// Pure pixel-grid SVGs (no image files) so it matches the ink-black
-// neo-brutalist look. '#' = filled pixel, '.' = transparent.
-function pixelSvg_(pattern, cell){
+// Pixel-grid SVGs extracted from the reference icons the person supplied
+// (thresholded to a clean grid, then hand-verified against the source
+// images before shipping). 'K' = black outline, 'B' = the reference's
+// indigo cuff color.
+function pixelSvg_(pattern, cell, colorMap){
+  colorMap = colorMap || { 'K': '#111' };
   const rows = pattern.length;
   const cols = Math.max.apply(null, pattern.map(r => r.length));
   let rects = '';
   pattern.forEach((row, y) => {
     for (let x = 0; x < row.length; x++){
-      if (row[x] === '#') rects += '<rect x="'+(x*cell)+'" y="'+(y*cell)+'" width="'+cell+'" height="'+cell+'"/>';
+      const ch = row[x];
+      if (colorMap[ch]) rects += '<rect x="'+(x*cell)+'" y="'+(y*cell)+'" width="'+cell+'" height="'+cell+'" fill="'+colorMap[ch]+'"/>';
     }
   });
   const w = cols*cell, h = rows*cell;
-  return '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" fill="#111">'+rects+'</svg>';
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'">'+rects+'</svg>';
 }
 
 const ARROW_PATTERN = [
-  '#...........',
-  '##..........',
-  '###.........',
-  '####........',
-  '#####.......',
-  '######......',
-  '#######.....',
-  '########....',
-  '#####.......',
-  '##.##.......',
-  '#..##.......',
-  '....##......',
-  '....##......',
-  '.....##.....',
-  '.....##.....',
-  '......#.....',
+  'K............',
+  'KK...........',
+  'KWK..........',
+  'KWWK.........',
+  'KWWWK........',
+  'KWWWWKK......',
+  'KWWWWWKK.....',
+  'KWWWWWWWK....',
+  'KWWWWWWWWK...',
+  'KWWWWWWWWWK..',
+  'KWWWWWWWWWWK.',
+  'KWWWWWWWWWWWK',
+  'KWWWWWWWKKKKK',
+  'KWWWKKWWK....',
+  'KWWK.KKWWK...',
+  'KWK..KKWWK...',
+  'KK....KKWWK..',
+  '......KKWWK..',
+  '........KK...',
 ];
-// Two-frame pointing glove — index finger shifts down a row between frames
-// to read as a little tap/flex while hovering something clickable.
+
+// Pointing glove — index finger + click sparks, cuff at the wrist.
 const GLOVE_FRAME_A = [
-  '....##......',
-  '...#..#.....',
-  '...#..#.....',
-  '...#..#.....',
-  '..##..##....',
-  '.#..####....',
-  '#.#.#..#....',
-  '#..#...#....',
-  '.#......#...',
-  '.#......#...',
-  '..#......#..',
-  '..########..',
+  '.....KK.......',
+  '.K...KK...K...',
+  '..K..KK..K....',
+  '...K.KKKK.....',
+  '..............',
+  'KKK..K...KKK..',
+  '....KKKK......',
+  '....KKKK......',
+  '....KKKK......',
+  '....KKKKK.....',
+  '....KKKKKKK...',
+  '....KKKKKKKKK.',
+  '.KK.KKKKKKWKKK',
+  'KKKKKKWWWKWKWK',
+  'KKWKKWWWWWWKWK',
+  '.KKWWWWWWWWWWK',
+  '..KKWWWWWWWWWK',
+  '...KWWWWWWWWWK',
+  '...KKWWWWWWWWK',
+  '....KKWWWWWWWK',
+  '....KKWWWWWWK.',
+  '....KKKKKKKKK.',
+  '....KKBBBBBBK.',
+  '....KKKKKKKKK.',
 ];
-const GLOVE_FRAME_B = [
-  '............',
-  '....##......',
-  '...#..#.....',
-  '...#..#.....',
-  '..##..##....',
-  '.#..####....',
-  '#.#.#..#....',
-  '#..#...#....',
-  '.#......#...',
-  '.#......#...',
-  '..#......#..',
-  '..########..',
+// Frame B: same shape nudged down a row — reads as a little tap/flex.
+const GLOVE_FRAME_B = ['..............'].concat(GLOVE_FRAME_A.slice(0, -1));
+
+// Magnifying glass — shown while hovering a row (the "inspect this call" cue).
+const MAG_PATTERN = [
+  '...KKKK......',
+  '.KKKWWKKK....',
+  '.KWWWWWWK....',
+  'KKWWKKWWKK...',
+  'KWWKWWWWWK...',
+  'KWWKWWWWWK...',
+  'KKWWWWWWKK...',
+  '.KWWWWWWK....',
+  '.KKKWWKKK....',
+  '...KKKK..K...',
+  '..........K..',
+  '...........K.',
+  '............K',
 ];
 
 const CELL = 3;
-const ARROW_SVG = pixelSvg_(ARROW_PATTERN, CELL);
-const GLOVE_SVGS = [pixelSvg_(GLOVE_FRAME_A, CELL), pixelSvg_(GLOVE_FRAME_B, CELL)];
-const INTERACTIVE_SELECTOR = 'button, a, input, select, textarea, .chip, .checkbox-box, ' +
-  '[data-open], [data-toggle], [data-download], [data-remove]';
+const ARROW_CELL = 2; // arrow reads too large at the same scale as the others
+const BLACK_MAP = { K: '#111', W: '#fff' };
+const HAND_MAP = { K: '#111', W: '#fff', B: '#4328b7' };
+const ARROW_SVG = pixelSvg_(ARROW_PATTERN, ARROW_CELL, BLACK_MAP);
+const GLOVE_SVGS = [pixelSvg_(GLOVE_FRAME_A, CELL, HAND_MAP), pixelSvg_(GLOVE_FRAME_B, CELL, HAND_MAP)];
+const MAG_SVG = pixelSvg_(MAG_PATTERN, CELL, BLACK_MAP);
+
+// Row surface gets the magnifying glass (open detail); every other
+// interactive control gets the glove hand. Glove selector is checked
+// first since checkboxes/download buttons/sort headers live *inside*
+// row elements and should win over the row's own [data-open].
+const GLOVE_SELECTOR = 'button, a, input, select, textarea, .chip, .checkbox-box, .sortable, .th-toggle, ' +
+  '[data-toggle], [data-download], [data-remove]';
+const ROW_SELECTOR = '[data-open]';
 
 (function initPixelCursor(){
   const el = document.getElementById('pixelCursor');
   if (!el) return;
   el.innerHTML = ARROW_SVG;
-  let hovering = false;
+  el.style.transform = 'translate(-9999px,-9999px)';
+  let mode = 'arrow';
   let animTimer = null;
   let frame = 0;
 
-  function startHoverAnim(){
-    if (animTimer) return;
-    frame = 0;
-    el.innerHTML = GLOVE_SVGS[frame];
-    animTimer = setInterval(() => {
-      frame = 1 - frame;
-      el.innerHTML = GLOVE_SVGS[frame];
-    }, 220);
-  }
-  function stopHoverAnim(){
+  const OFFSETS = { arrow: [0, 0], glove: [-13, -2], mag: [-15, -15] };
+
+  function setMode(next){
+    if (mode === next) return;
+    mode = next;
     clearInterval(animTimer); animTimer = null;
-    el.innerHTML = ARROW_SVG;
+    if (mode === 'glove') {
+      frame = 0;
+      el.innerHTML = GLOVE_SVGS[0];
+      animTimer = setInterval(() => { frame = 1 - frame; el.innerHTML = GLOVE_SVGS[frame]; }, 220);
+    } else if (mode === 'mag') {
+      el.innerHTML = MAG_SVG;
+    } else {
+      el.innerHTML = ARROW_SVG;
+    }
   }
 
   document.addEventListener('mousemove', e => {
-    el.style.transform = 'translate(' + e.clientX + 'px,' + e.clientY + 'px)';
+    const off = OFFSETS[mode];
+    el.style.transform = 'translate(' + (e.clientX + off[0]) + 'px,' + (e.clientY + off[1]) + 'px)';
     // pointer-events:none on the cursor itself, so this always finds the
     // real element underneath rather than the cursor overlay
     const target = document.elementFromPoint(e.clientX, e.clientY);
-    const isHover = !!(target && target.closest(INTERACTIVE_SELECTOR));
-    if (isHover && !hovering) { hovering = true; startHoverAnim(); }
-    else if (!isHover && hovering) { hovering = false; stopHoverAnim(); }
+    if (target && target.closest(GLOVE_SELECTOR)) setMode('glove');
+    else if (target && target.closest(ROW_SELECTOR)) setMode('mag');
+    else setMode('arrow');
   });
   document.addEventListener('mouseleave', () => { el.style.display = 'none'; });
   document.addEventListener('mouseenter', () => { el.style.display = 'block'; });
