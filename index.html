@@ -3,76 +3,184 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>sales samples</title>
+<title>Sample Call Library</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <!--
   Reads the published-to-web CSV export of the Google Sheet that sits behind
-  the shared submission Form (see sample-log.html's FORM_CONFIG). No sign-in
-  needed — a published sheet is publicly readable by URL. No backend, no
-  Drive API.
+  the shared submission Form. No sign-in needed — a published sheet is
+  publicly readable by URL. No backend, no Drive API.
+
+  UI is a port of a neo-brutalist table-view mockup (grade/age/length columns,
+  filter chips, checkbox multi-select "sample set" tray, click-to-expand
+  detail modal). The Download button's progress bar is decorative — Drive
+  doesn't expose a real download-progress API — but "Share set" triggers
+  actual browser downloads for every selected file in one go.
 -->
 <style>
+  :root{
+    --ink:#111; --paper:#fff; --panel-bg:#fafafa; --muted:#999; --muted2:#888;
+    --row-border:#e2e2e2;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:#000;color:#e8e8e8;font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;
-    font-size:14px;line-height:1.5;padding:24px 16px 80px}
-  .wrap{max-width:900px;margin:0 auto}
-  h1{font-size:16px;font-weight:700;margin:0 0 4px;text-transform:uppercase;letter-spacing:1px}
-  .sub{color:#888;margin:0 0 20px;font-size:12px}
-  hr{border:none;border-top:1px solid #333;margin:18px 0}
-  a{color:#e8e8e8}
-  a:hover{color:#fff}
+  html,body{margin:0;padding:0;background:#fff;color:var(--ink);-webkit-font-smoothing:antialiased}
+  a{color:var(--ink);text-decoration:none}
+  a:hover{color:oklch(0.55 0.16 250)}
+  input{font:inherit}
+  input:focus{outline:none}
+  button{font:inherit}
+  ::-webkit-scrollbar{width:14px;height:14px}
+  ::-webkit-scrollbar-track{background:#f0f0f0;border-left:2px solid #000}
+  ::-webkit-scrollbar-thumb{background:linear-gradient(90deg,#fafafa,#dcdcdc);border:2px solid #000}
+  @keyframes zoomWin{from{transform:scale(.55) translateY(14px);opacity:.2}to{transform:scale(1) translateY(0);opacity:1}}
+  @keyframes barShift{from{background-position:0 0}to{background-position:12px 0}}
 
-  input{width:100%;background:#000;border:1px solid #444;color:#e8e8e8;
-    font-family:inherit;font-size:13px;padding:8px 9px}
-  input:focus{outline:1px solid #999;border-color:#999}
+  .wrap{min-height:100vh;background:#fff;padding:34px 40px 60px;font-family:'IBM Plex Mono',ui-monospace,monospace}
+  .topbar{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px}
+  .kicker{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted2)}
+  .title{font-family:Archivo,sans-serif;font-weight:700;font-size:26px;letter-spacing:-.01em}
+  .titlecol{display:flex;flex-direction:column;gap:6px}
+  .srcflag{display:flex;align-items:center;gap:10px}
+  .hatch-h{width:120px;height:12px;background:repeating-linear-gradient(90deg,#111 0 2px,transparent 2px 6px)}
+  .srclabel{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted2)}
 
-  button{background:#000;color:#e8e8e8;border:1px solid #444;
-    padding:6px 12px;font-family:inherit;font-size:11px;text-transform:uppercase;letter-spacing:.5px;cursor:pointer}
-  button:hover{border-color:#999}
+  .panel{background:#111;clip-path:polygon(22px 0,100% 0,100% calc(100% - 22px),calc(100% - 22px) 100%,0 100%,0 22px);box-shadow:7px 7px 0 rgba(17,17,17,.10)}
+  .panel-inner{margin:2px;background:#fff;clip-path:polygon(21px 0,100% 0,100% calc(100% - 21px),calc(100% - 21px) 100%,0 100%,0 21px)}
 
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1px;background:#333;margin-top:16px}
-  .cell{background:#000;padding:14px 12px;cursor:pointer}
-  .cell:hover{background:#111}
-  .cell .ind{font-weight:700;text-transform:uppercase;font-size:12px}
-  .cell .aud{color:#999;font-size:11px;margin-top:2px}
-  .cell .count{color:#666;font-size:10px;margin-top:8px}
-  .cell.empty{opacity:.4;cursor:default}
-  .cell.empty:hover{background:#000}
+  .titlebar{display:flex;align-items:center;gap:8px;height:32px;padding:0 9px;background:linear-gradient(#f7f7f7,#e2e2e2);border-bottom:2px solid #111}
+  .dot-box{width:14px;height:14px;border:2px solid #111;background:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+  .dot-box i{width:4px;height:4px;background:#111}
+  .hatch-v{flex:1;height:9px;background:repeating-linear-gradient(to bottom,#111 0 1px,transparent 1px 3px)}
+  .titlebar-label{font-family:Archivo,sans-serif;font-weight:700;font-size:12px;letter-spacing:.16em;text-transform:uppercase;white-space:nowrap}
+  .win-btn{width:14px;height:14px;border:2px solid #111;background:#fff;padding:2px;flex:none}
+  .win-btn i{display:block;width:100%;height:100%;border:1px solid #111}
+  .win-btn.lines{background-image:repeating-linear-gradient(to bottom,#111 0 1px,transparent 1px 3px)}
+  .close-btn{width:16px;height:16px;border:2px solid #111;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:Archivo,sans-serif;font-weight:700;font-size:11px;line-height:1;color:#111;flex:none}
+  .close-btn:hover{background:#111;color:#fff}
 
-  .empty-msg{color:#666;padding:40px 0;text-align:center;font-size:12px}
+  .filters-bar{display:flex;align-items:center;gap:14px;padding:11px 12px;border-bottom:2px solid #111;background:var(--panel-bg);flex-wrap:wrap}
+  .search-box{display:flex;align-items:center;border:2px solid #111;background:#fff;height:28px;clip-path:polygon(8px 0,100% 0,100% 100%,0 100%,0 8px)}
+  .search-box .icon{padding:0 8px;font-size:11px;color:var(--muted)}
+  .search-box input{border:none;background:transparent;width:210px;font-size:12px;padding:0 8px 0 0;color:#111}
+  .chip-group{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .chip-group .glabel{font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+  .chip{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;padding:5px 8px;border:2px solid #111;cursor:pointer;background:#fff;color:#333}
+  .chip.active{background:#111;color:#fff}
+  .filler{flex:1;min-width:20px}
+  .hatch-h60{width:60px;height:14px;background:repeating-linear-gradient(90deg,#111 0 1px,transparent 1px 4px)}
 
-  table{width:100%;border-collapse:collapse;margin-top:14px;font-size:12px}
-  th,td{border:1px solid #333;padding:6px 8px;text-align:left;vertical-align:top}
-  th{color:#999;font-weight:400;text-transform:uppercase;font-size:10px;letter-spacing:.5px}
-  tr.stale td{color:#f88}
-  tr.stale td:first-child::before{content:"! ";color:#f88}
+  .grid-row{display:grid;grid-template-columns:38px 44px 60px 60px 66px 1.2fr 1fr 2.4fr;align-items:center}
+  .table-header{background:#ededed;border-bottom:2px solid #111;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#444}
+  .table-header > div{padding:9px 6px}
+  .table-header .sortable{cursor:pointer}
+  .table-header .sortable:hover{color:#111}
+  .th-check{padding:9px 0 9px 12px !important}
+  .th-toggle{width:13px;height:13px;border:2px solid #111;background:#fff;cursor:pointer}
 
-  .breadcrumb{font-size:11px;color:#888;margin-top:4px}
-  .breadcrumb button{margin-right:8px}
+  .table-body{max-height:560px;overflow-y:auto;background:#fff}
+  .row{border-bottom:1px solid var(--row-border);cursor:pointer;background:#fff}
+  .row:hover{background:#fbfbfb}
+  .row.selected{background:#f5f5f5;box-shadow:inset 4px 0 0 #111}
+  .row > div{padding:0 6px}
+  .cell-check{padding:0 0 0 12px !important}
+  .checkbox-box{width:13px;height:13px;border:2px solid #111;background:#fff;color:#fff;font-size:9px;line-height:11px;text-align:center;cursor:pointer}
+  .checkbox-box.on{background:#111}
+  .cell-dl{padding:0 4px !important}
+  .dl-icon-btn{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:2px solid #111;background:#fff;cursor:pointer;color:#111;padding:0}
+  .dl-icon-btn:hover{background:#111;color:#fff}
+  .dl-icon-btn span{display:block;width:12px;border-bottom:2px solid currentColor;text-align:center;font-size:11px;line-height:13px}
+  .badge{display:flex;align-items:center;justify-content:center;width:38px;height:26px;border:2px solid #111;font-family:Archivo,sans-serif;font-weight:700;font-size:12px;letter-spacing:.02em}
+  .agebadge{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:22px;padding:0 7px;border:2px solid #111;font-size:11px;font-weight:600}
+  .cell-dur{font-size:11.5px;color:#333;font-variant-numeric:tabular-nums}
+  .cell-agent{font-size:12.5px;font-weight:500}
+  .cell-industry{font-size:11px;letter-spacing:.04em;color:#333}
+  .cell-note{padding:0 12px 0 6px !important;font-size:11px;color:#767676;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .empty-state{padding:54px 12px;text-align:center;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#aaa}
+  .empty-state.err{color:#c0392b;white-space:pre-wrap;line-height:1.6}
+
+  .footer-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;height:28px;padding:0 12px;border-top:2px solid #111;background:linear-gradient(#f7f7f7,#e9e9e9);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:#555}
+  .footer-hatch{flex:1;height:7px;background:repeating-linear-gradient(to bottom,#111 0 1px,transparent 1px 3px);opacity:.35}
+
+  .tray-panel{margin-top:22px;background:#111;clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,18px 100%,0 calc(100% - 18px))}
+  .tray-inner{margin:2px;background:#fff;clip-path:polygon(0 0,calc(100% - 17px) 0,100% 17px,100% 100%,17px 100%,0 calc(100% - 17px));padding:14px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .tray-label-col{display:flex;flex-direction:column;gap:3px;min-width:150px}
+  .tray-label{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+  .tray-count{font-family:Archivo,sans-serif;font-weight:700;font-size:15px}
+  .tray-chips{flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:200px}
+  .tray-chip{display:flex;align-items:center;gap:8px;border:2px solid #111;padding:4px 6px 4px 8px;font-size:11px}
+  .tray-chip .dot{display:inline-block;width:10px;height:10px;border:1px solid #111}
+  .tray-chip .ind{color:var(--muted)}
+  .tray-chip button{border:none;background:transparent;cursor:pointer;font-family:inherit;font-size:11px;color:#111;padding:0 2px}
+  .tray-empty{font-size:11px;color:#aaa;letter-spacing:.04em}
+  .tray-actions{display:flex;align-items:center;gap:10px}
+  .btn-clear{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;background:#fff;border:2px solid #111;padding:9px 12px;cursor:pointer}
+  .btn-clear:hover{background:#f0f0f0}
+  .btn-share{font-family:Archivo,sans-serif;font-weight:700;font-size:11px;letter-spacing:.14em;text-transform:uppercase;background:#111;color:#fff;border:2px solid #111;padding:10px 18px;cursor:pointer;box-shadow:4px 4px 0 rgba(17,17,17,.18);clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)}
+  .btn-share:hover{box-shadow:2px 2px 0 rgba(17,17,17,.18)}
+  .btn-share:disabled{opacity:.4;cursor:default;box-shadow:none}
+
+  .modal-overlay{position:fixed;inset:0;background:rgba(17,17,17,.18);display:flex;align-items:center;justify-content:center;padding:32px;z-index:50;font-family:'IBM Plex Mono',ui-monospace,monospace}
+  .modal-box{width:640px;max-width:100%;background:#111;clip-path:polygon(22px 0,100% 0,100% calc(100% - 22px),calc(100% - 22px) 100%,0 100%,0 22px);box-shadow:10px 10px 0 rgba(17,17,17,.16);animation:zoomWin 160ms ease-out}
+  .modal-meta{display:flex;align-items:center;gap:14px;padding:16px;border-bottom:2px solid #111;background:var(--panel-bg)}
+  .modal-badge{display:flex;align-items:center;justify-content:center;width:52px;height:52px;border:2px solid #111;font-family:Archivo,sans-serif;font-weight:700;font-size:20px}
+  .modal-agebadge{display:inline-flex;align-items:center;justify-content:center;height:26px;padding:0 10px;border:2px solid #111;font-size:11.5px;font-weight:600;letter-spacing:.04em}
+  .modal-stat{display:flex;flex-direction:column;gap:2px}
+  .modal-stat span:first-child{font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+  .modal-stat span:last-child{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+  .modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#e2e2e2;border-bottom:2px solid #111}
+  .modal-grid .cell{background:#fff;padding:14px 16px;display:flex;flex-direction:column;gap:5px}
+  .modal-grid .cell.wide{grid-column:span 2}
+  .modal-grid .cell span:first-child{font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+  .modal-grid .cell span:last-child{font-size:13px;letter-spacing:.04em}
+  .modal-grid .cell.wide.note span:last-child{font-size:13px;line-height:1.55;color:#333;letter-spacing:normal}
+  .modal-actions{display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--panel-bg)}
+  .modal-actions .play{display:flex;align-items:center;gap:8px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;border:2px solid #111;background:#111;color:#fff;padding:9px 14px}
+  .modal-actions .play:hover{opacity:.85}
+  .modal-actions .ghost{font-family:inherit;font-size:10px;letter-spacing:.14em;text-transform:uppercase;border:2px solid #111;background:#fff;color:#111;padding:9px 14px;cursor:pointer}
+  .modal-actions .ghost:hover{background:#f0f0f0}
+
+  .dl-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:60;pointer-events:none;font-family:'IBM Plex Mono',ui-monospace,monospace}
+  .dl-box{width:390px;background:#111;box-shadow:8px 8px 0 rgba(17,17,17,.2);animation:zoomWin 140ms ease-out;pointer-events:auto}
+  .dl-inner{margin:2px;background:#fff}
+  .dl-bar{padding:16px;display:flex;flex-direction:column;gap:12px}
+  .dl-file-row{display:flex;align-items:center;gap:10px}
+  .dl-icon{width:26px;height:32px;border:2px solid #111;background:#fff;background-image:repeating-linear-gradient(to bottom,#111 0 1px,transparent 1px 5px)}
+  .dl-file-text{display:flex;flex-direction:column;gap:3px;overflow:hidden}
+  .dl-file-text span:first-child{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dl-file-text span:last-child{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .dl-track{height:20px;border:2px solid #111;background:#fff;padding:2px}
+  .dl-fill{height:100%;background:repeating-linear-gradient(115deg,#111 0 4px,transparent 4px 8px);animation:barShift 500ms linear infinite;transition:width 120ms linear}
+  .dl-footer{display:flex;align-items:center;justify-content:space-between}
+  .dl-pct{font-size:10px;letter-spacing:.12em;color:#666;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>sales sample search</h1>
-  <p class="sub">Browse by industry / audience, then pick a call by offer.</p>
 
-  <input type="text" id="q" placeholder="search industry, audience, offer, or agent...">
+  <div class="topbar">
+    <div class="titlecol">
+      <div class="kicker">Sales Enablement</div>
+      <div class="title">Sample Call Library</div>
+    </div>
+    <div class="srcflag">
+      <div class="hatch-h"></div>
+      <div class="srclabel">Form_Responses</div>
+    </div>
+  </div>
 
-  <div id="view"></div>
+  <div id="app"></div>
+
 </div>
 
 <script>
 "use strict";
 const AGE_ALERT_DAYS = 60;
 const $ = id => document.getElementById(id);
+const app = $('app');
 
-/* ======================= SHARED DATA SOURCE (published CSV) ===============
-   Reads the response sheet behind the Google Form that sample-log.html
-   submits to (File -> Share -> Publish to web -> CSV, on that sheet).
-   No sign-in needed to read a published sheet. Since the Form appends a
-   new row on every submission rather than overwriting, this page groups
-   rows by call type (industry+audience+offer) and keeps only the most
-   recent one by call date — same "one champion per call type" behavior
-   the log page enforces locally. */
+/* ======================= SHARED DATA SOURCE (published CSV) =============== */
 const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRT6sX6uL-Rv_t-FCAzWGn96-OkhCFyF7ELzXlvDqYuIhvuR0_Cyr2akbbGxvm5alDTPopJf8IV9nmG/pub?gid=1317295187&single=true&output=csv';
 
 function parseCsv(text){
@@ -86,12 +194,6 @@ function parseCsv(text){
   return rows.filter(r=>r.length>1&&r.some(c=>c!==''));
 }
 
-/* Matches columns by their header text (the Form question titles) rather
-   than fixed position — robust regardless of what order the questions were
-   added in. Expects a "Timestamp" column plus columns whose names contain
-   these words, case-insensitive: link, agent, date, industry, audience,
-   offer, grade, note. Duration isn't a form field — it's read live from
-   each audio file's own metadata, see driveDirectUrl_/getDuration_. */
 function csvRowsToRecords(rows){
   if (rows.length < 2) return [];
   const header = rows[0].map(h => h.toLowerCase());
@@ -104,10 +206,6 @@ function csvRowsToRecords(rows){
   })).filter(r => r.link);
 }
 
-/* Keep only the newest row per (ind, aud, off) call type. Timestamp column
-   comes from Google Forms as M/D/YYYY H:MM:SS, so it's parsed as a real
-   Date for the tie-break rather than compared as a string (lexicographic
-   comparison of that format is wrong, e.g. "8/9/2026" > "8/26/2026"). */
 function loggedAtMs_(s){
   const t = Date.parse(s || '');
   return isNaN(t) ? 0 : t;
@@ -127,44 +225,34 @@ function dedupeToChampions(records){
 
 let SOURCE_ROWS = [];
 let LOAD_ERROR = null;
+let LAST_DIAGNOSTIC = null;
 
-/* ======================= LIVE DURATION LOOKUP ==============================
-   Drive's normal share link (.../file/d/ID/view) is a viewer PAGE, not a
-   playable audio stream. Converting it to the direct-content URL lets an
-   <audio> element load just enough to read .duration — this works without
-   any sign-in, but ONLY if the file is shared "Anyone with the link" as a
-   viewer. Best-effort: on any failure (private file, blocked interstitial,
-   Drive changing this URL format) it just falls back to a dash rather than
-   breaking the page. Results are cached per file for the session. */
+/* ======================= LIVE DURATION LOOKUP ============================== */
 function driveDirectUrl_(shareLink){
   const m = String(shareLink||'').match(/\/d\/([a-zA-Z0-9_-]+)/) || String(shareLink||'').match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if (!m) return null;
   return 'https://drive.google.com/uc?export=download&id=' + m[1];
 }
-const durationCache = {};
-function getDuration_(shareLink, cellEl){
-  const direct = driveDirectUrl_(shareLink);
-  if (!direct) { cellEl.textContent = '\u2014'; return; }
-  if (durationCache[direct] !== undefined) { cellEl.textContent = durationCache[direct]; return; }
+const durationCache = {};   // link -> "3:42" | "—"
+const durationSeconds = {}; // link -> number | undefined
+function getDuration_(link, onLoaded){
+  const direct = driveDirectUrl_(link);
+  if (!direct) { durationCache[link] = '\u2014'; return; }
+  if (durationCache[link] !== undefined) return;
   const audio = document.createElement('audio');
   audio.preload = 'metadata';
   audio.src = direct;
   audio.addEventListener('loadedmetadata', () => {
     const s = Math.round(audio.duration);
     const fmt = isFinite(s) ? Math.floor(s/60) + ':' + String(s%60).padStart(2,'0') : '\u2014';
-    durationCache[direct] = fmt;
-    cellEl.textContent = fmt;
+    durationCache[link] = fmt;
+    if (isFinite(s)) durationSeconds[link] = s;
+    if (onLoaded) onLoaded();
   });
-  audio.addEventListener('error', () => { durationCache[direct] = '\u2014'; cellEl.textContent = '\u2014'; });
+  audio.addEventListener('error', () => { durationCache[link] = '\u2014'; if (onLoaded) onLoaded(); });
 }
 
-let LAST_DIAGNOSTIC = null;
-
 function loadFromSheet(){
-  if (CSV_URL.indexOf('PASTE_') === 0) {
-    $('view').innerHTML = '<div class="empty-msg">shared sheet not configured yet — set CSV_URL at the top of this file</div>';
-    return Promise.resolve();
-  }
   return fetch(CSV_URL, { cache: 'no-store' })
     .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
     .then(text => {
@@ -186,7 +274,6 @@ function loadFromSheet(){
     });
 }
 
-function load(){ return SOURCE_ROWS; }
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function titleCase(s){return String(s||'').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());}
 function ageDays(dateStr){
@@ -194,128 +281,417 @@ function ageDays(dateStr){
   const d = new Date(dateStr + 'T00:00:00'); if (isNaN(d)) return null;
   return Math.floor((Date.now()-d.getTime())/86400000);
 }
-function searchable(r){ return [r.ind,r.aud,r.off,r.agent].filter(Boolean).join(' ').toLowerCase(); }
+function ageColor(d){
+  if (d===null) return '#eee';
+  if (d<=7) return 'oklch(0.80 0.17 148)';
+  if (d<=30) return 'oklch(0.85 0.14 196)';
+  if (d<AGE_ALERT_DAYS) return 'oklch(0.87 0.14 82)';
+  return 'oklch(0.85 0.13 25)';
+}
+function searchable(r){ return [r.ind,r.aud,r.off,r.agent,r.note].filter(Boolean).join(' ').toLowerCase(); }
+function fileName(r){
+  const last = (r.agent||'call').split(',')[0].trim().toLowerCase().replace(/[^a-z0-9]+/g,'-') || 'call';
+  const ind = (r.ind||'').toLowerCase().replace(/[^a-z0-9]+/g,'-');
+  return last + '_' + ind + '_' + (r.date||'') + '.mp3';
+}
 
-const GRADE_RANK = { A:0, B:1, C:2, D:3, F:4 };
-let selected = null; // {ind, aud} or null for grid view
+/* ======================= GRADES ============================== */
+const GRADES = ['A+','A','A-','B+','B','B-'];
+const GRADE_RANK = { 'A+':0,'A':1,'A-':2,'B+':3,'B':4,'B-':5 };
+const GRADE_COLOR = {
+  'A+': 'oklch(0.80 0.17 148)',
+  'A':  'oklch(0.83 0.15 165)',
+  'A-': 'oklch(0.88 0.13 150)',
+  'B+': 'oklch(0.84 0.13 236)',
+  'B':  'oklch(0.90 0.08 238)',
+  'B-': 'oklch(0.87 0.14 82)',
+};
+function gradeColor(g){ return GRADE_COLOR[g] || '#eee'; }
 
-function render(){
-  const q = ($('q').value||'').toLowerCase();
-  let rows = load();
-  if (q) rows = rows.filter(r => searchable(r).indexOf(q) >= 0);
+/* ======================= APP STATE ============================== */
+const state = {
+  query: '',
+  grades: [],
+  industries: [],
+  sortKey: 'age',
+  sortDir: 'asc',
+  selected: new Set(),
+  openLink: null,
+  dl: null, // { link, file, pct, done }
+};
 
-  if (!rows.length) {
-    if (LOAD_ERROR) {
-      $('view').innerHTML = '<div class="empty-msg">could not load the shared sheet (' + esc(LOAD_ERROR) + ')</div>';
-    } else if (q) {
-      $('view').innerHTML = '<div class="empty-msg">nothing logged yet for that search</div>';
-    } else if (LAST_DIAGNOSTIC && LAST_DIAGNOSTIC.rawRowCount > 1 && LAST_DIAGNOSTIC.parsedCount === 0) {
-      // Fetch worked and the sheet has data rows, but none survived column
-      // matching — almost always means the header text doesn't contain the
-      // expected keywords. Show exactly what was found instead of a dead end.
-      $('view').innerHTML = '<div class="empty-msg" style="text-align:left;max-width:700px;margin:20px auto">'+
-        '<b>Loaded ' + (LAST_DIAGNOSTIC.rawRowCount-1) + ' row(s) from the sheet, but none matched expected columns.</b><br><br>'+
-        'Header row found:<br>' + LAST_DIAGNOSTIC.headers.map((h,i) => (i+1)+'. "'+esc(h)+'"').join('<br>') +
-        (LAST_DIAGNOSTIC.sampleRawRow ? '<br><br>First data row:<br>' + LAST_DIAGNOSTIC.sampleRawRow.map((v,i) => (i+1)+'. "'+esc(v)+'"').join('<br>') : '') +
-        '<br><br>Send me this list and I\'ll fix the column matching to use the real headers.'+
-        '</div>';
-    } else if (LAST_DIAGNOSTIC && LAST_DIAGNOSTIC.rawRowCount <= 1) {
-      $('view').innerHTML = '<div class="empty-msg">the sheet loaded fine but has no submitted rows yet (only a header row, or empty)</div>';
+function toggleIn_(arr, val){
+  const i = arr.indexOf(val);
+  if (i >= 0) arr.splice(i,1); else arr.push(val);
+}
+
+function sortBy(key){
+  if (state.sortKey === key) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+  else { state.sortKey = key; state.sortDir = 'asc'; }
+  render();
+}
+
+function startDownload(r){
+  clearInterval(window.__dlTimer); clearTimeout(window.__dlTimer2);
+  state.dl = { link: r.link, file: fileName(r), pct: 0, done: false };
+  render();
+  window.__dlTimer = setInterval(() => {
+    if (!state.dl) return;
+    const next = Math.min(100, state.dl.pct + 3 + Math.random()*11);
+    if (next >= 100) {
+      clearInterval(window.__dlTimer);
+      state.dl.pct = 100; state.dl.done = true;
+      render();
+      window.__dlTimer2 = setTimeout(() => { state.dl = null; render(); }, 1100);
     } else {
-      $('view').innerHTML = '<div class="empty-msg">nothing logged yet</div>';
+      state.dl.pct = next;
+      render();
     }
+  }, 110);
+}
+function cancelDownload(){
+  clearInterval(window.__dlTimer); clearTimeout(window.__dlTimer2);
+  state.dl = null; render();
+}
+
+function triggerShareDownloads(rows){
+  const items = rows.filter(r => state.selected.has(r.link));
+  items.forEach((r, i) => {
+    setTimeout(() => {
+      const direct = driveDirectUrl_(r.link);
+      if (!direct) return;
+      const a = document.createElement('a');
+      a.href = direct;
+      a.download = fileName(r);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }, i * 350); // stagger slightly — browsers can flag rapid multi-downloads from one click
+  });
+}
+
+/* ======================= RENDER ============================== */
+function render(){
+  // preserve search-box focus/caret across full re-renders
+  const activeIsSearch = document.activeElement && document.activeElement.id === 'q';
+  const caret = activeIsSearch ? document.activeElement.selectionStart : null;
+
+  if (LOAD_ERROR || (LAST_DIAGNOSTIC && LAST_DIAGNOSTIC.rawRowCount <= 1) ||
+      (LAST_DIAGNOSTIC && LAST_DIAGNOSTIC.rawRowCount > 1 && LAST_DIAGNOSTIC.parsedCount === 0)) {
+    app.innerHTML = renderEmptyShell_();
     return;
   }
 
-  if (selected) {
-    renderList(rows);
-  } else {
-    renderGrid(rows);
-  }
-}
+  const q = state.query.trim().toLowerCase();
+  let rows = SOURCE_ROWS.filter(r => {
+    if (state.grades.length && !state.grades.includes(r.grade)) return false;
+    if (state.industries.length && !state.industries.includes(r.ind)) return false;
+    if (q && searchable(r).indexOf(q) < 0) return false;
+    return true;
+  });
 
-function renderGrid(rows){
-  const pairs = {}; // "ind|||aud" -> array of rows
-  const inds = new Set(), auds = new Set();
+  const dir = state.sortDir === 'asc' ? 1 : -1;
+  rows = rows.slice().sort((a,b) => {
+    let av, bv;
+    if (state.sortKey === 'age') { av = ageDays(a.date) ?? 999999; bv = ageDays(b.date) ?? 999999; }
+    else if (state.sortKey === 'seconds') { av = durationSeconds[a.link] ?? -1; bv = durationSeconds[b.link] ?? -1; }
+    else if (state.sortKey === 'grade') { av = GRADE_RANK[a.grade] ?? 999; bv = GRADE_RANK[b.grade] ?? 999; }
+    else if (state.sortKey === 'agent') { av = a.agent.toLowerCase(); bv = b.agent.toLowerCase(); }
+    else { av = a.ind.toLowerCase(); bv = b.ind.toLowerCase(); }
+    return av < bv ? -dir : av > bv ? dir : 0;
+  });
+
+  const industryList = Array.from(new Set(SOURCE_ROWS.map(r => r.ind))).filter(Boolean).sort();
+
+  const html = `
+  <div class="panel">
+    <div class="panel-inner">
+      <div class="titlebar">
+        <div class="dot-box"><i></i></div>
+        <div class="hatch-v"></div>
+        <div class="titlebar-label">Best Calls</div>
+        <div class="hatch-v"></div>
+        <div class="win-btn"><i></i></div>
+        <div class="win-btn lines"></div>
+      </div>
+
+      <div class="filters-bar">
+        <div class="search-box">
+          <div class="icon">&#8981;</div>
+          <input type="text" id="q" placeholder="agent, industry, offer, note…" value="${esc(state.query)}">
+        </div>
+
+        <div class="chip-group">
+          <span class="glabel">Grade</span>
+          ${GRADES.map(g => `<button class="chip grade-chip${state.grades.includes(g)?' active':''}" data-grade="${esc(g)}">${esc(g)}</button>`).join('')}
+        </div>
+
+        <div class="chip-group">
+          <span class="glabel">Industry</span>
+          ${industryList.map(i => `<button class="chip ind-chip${state.industries.includes(i)?' active':''}" data-ind="${esc(i)}">${esc(titleCase(i))}</button>`).join('')}
+        </div>
+
+        <div class="filler"></div>
+        <div class="hatch-h60"></div>
+      </div>
+
+      <div class="grid-row table-header">
+        <div class="th-check"><div class="th-toggle" id="toggleAll"></div></div>
+        <div>Get</div>
+        <div class="sortable" data-sort="grade">Gr${arrow_('grade')}</div>
+        <div class="sortable" data-sort="age">Age${arrow_('age')}</div>
+        <div class="sortable" data-sort="seconds">Len${arrow_('seconds')}</div>
+        <div class="sortable" data-sort="agent">Agent${arrow_('agent')}</div>
+        <div class="sortable" data-sort="industry">Industry${arrow_('industry')}</div>
+        <div>Note</div>
+      </div>
+
+      <div class="table-body" id="tbody">
+        ${rows.length ? rows.map(r => rowHtml_(r)).join('') : '<div class="empty-state">No calls match these filters</div>'}
+      </div>
+
+      <div class="footer-bar">
+        <div>${rows.length} of ${SOURCE_ROWS.length} calls</div>
+        <div class="footer-hatch"></div>
+        <div>sorted by ${state.sortKey === 'seconds' ? 'length' : state.sortKey} ${state.sortDir === 'asc' ? '&#9650;' : '&#9660;'}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tray-panel">
+    <div class="tray-inner">
+      <div class="tray-label-col">
+        <div class="tray-label">Sample set</div>
+        <div class="tray-count">${state.selected.size === 0 ? 'Empty' : state.selected.size + (state.selected.size===1?' call':' calls')}</div>
+      </div>
+      <div class="tray-chips">
+        ${Array.from(state.selected).map(link => {
+          const r = SOURCE_ROWS.find(x => x.link === link);
+          if (!r) return '';
+          return `<div class="tray-chip"><span class="dot" style="background:${gradeColor(r.grade)}"></span><span>${esc(r.agent)}</span><span class="ind">${esc(titleCase(r.ind))}</span><button data-remove="${esc(link)}">&#10005;</button></div>`;
+        }).join('') || '<div class="tray-empty">Check rows above to build a set for a prospect.</div>'}
+      </div>
+      <div class="tray-actions">
+        <button class="btn-clear" id="clearSel">Clear</button>
+        <button class="btn-share" id="shareSet" ${state.selected.size===0?'disabled':''}>Share set &#8594;</button>
+      </div>
+    </div>
+  </div>
+
+  ${state.openLink ? detailModalHtml_(SOURCE_ROWS.find(r => r.link === state.openLink)) : ''}
+  ${state.dl ? downloadModalHtml_() : ''}
+  `;
+
+  app.innerHTML = html;
+  bindEvents_(rows);
+
+  if (activeIsSearch) {
+    const el = $('q');
+    if (el) { el.focus(); el.setSelectionRange(caret, caret); }
+  }
+
+  // kick off duration lookups for any visible row missing a cached value
   rows.forEach(r => {
-    const key = r.ind + '|||' + r.aud;
-    (pairs[key] = pairs[key] || []).push(r);
-    inds.add(r.ind); auds.add(r.aud);
-  });
-  const indList = Array.from(inds).sort();
-  const audList = Array.from(auds).sort();
-
-  let html = '<div class="grid">';
-  indList.forEach(ind => {
-    audList.forEach(aud => {
-      const key = ind + '|||' + aud;
-      const n = (pairs[key] || []).length;
-      if (n === 0) {
-        html += '<div class="cell empty">'+
-          '<div class="ind">'+esc(titleCase(ind))+'</div>'+
-          '<div class="aud">'+esc(titleCase(aud))+'</div>'+
-          '<div class="count">0 calls</div>'+
-          '</div>';
-      } else {
-        html += '<div class="cell" data-key="'+esc(key)+'">'+
-          '<div class="ind">'+esc(titleCase(ind))+'</div>'+
-          '<div class="aud">'+esc(titleCase(aud))+'</div>'+
-          '<div class="count">'+n+' call'+(n===1?'':'s')+'</div>'+
-          '</div>';
-      }
-    });
-  });
-  html += '</div>';
-  $('view').innerHTML = html;
-
-  document.querySelectorAll('.cell:not(.empty)').forEach(el => {
-    el.addEventListener('click', () => {
-      const [ind, aud] = el.getAttribute('data-key').split('|||');
-      selected = { ind, aud };
-      render();
-    });
+    if (durationCache[r.link] === undefined) {
+      getDuration_(r.link, () => {
+        const cell = document.querySelector('[data-dur="'+CSS.escape(r.link)+'"]');
+        if (cell) cell.textContent = durationCache[r.link];
+        if (state.sortKey === 'seconds') render();
+      });
+    }
   });
 }
 
-function renderList(rows){
-  const forPair = rows.filter(r => r.ind === selected.ind && r.aud === selected.aud);
-  let html = '<div class="breadcrumb"><button id="backBtn">&larr; back</button>'+
-    esc(titleCase(selected.ind)) + ' / ' + esc(titleCase(selected.aud)) + '</div>';
+function arrow_(key){
+  return state.sortKey === key ? (state.sortDir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
+}
 
-  if (!forPair.length) {
-    html += '<div class="empty-msg">no calls logged for this combination</div>';
+function rowHtml_(r){
+  const dd = ageDays(r.date);
+  const sel = state.selected.has(r.link);
+  const dur = durationCache[r.link];
+  return `
+  <div class="grid-row row${sel?' selected':''}" data-open="${esc(r.link)}">
+    <div class="cell-check"><div class="checkbox-box${sel?' on':''}" data-toggle="${esc(r.link)}">${sel?'&#10003;':''}</div></div>
+    <div class="cell-dl"><button class="dl-icon-btn" data-download="${esc(r.link)}" title="Download"><span>&#8595;</span></button></div>
+    <div><div class="badge" style="background:${gradeColor(r.grade)}">${esc(r.grade)||'\u2014'}</div></div>
+    <div><div class="agebadge" style="background:${ageColor(dd)}">${dd===null?'\u2014':dd+'d'}</div></div>
+    <div class="cell-dur" data-dur="${esc(r.link)}">${dur === undefined ? '\u2026' : dur}</div>
+    <div class="cell-agent">${esc(r.agent)||'\u2014'}</div>
+    <div class="cell-industry">${esc(titleCase(r.ind))}</div>
+    <div class="cell-note">${esc(r.note)}</div>
+  </div>`;
+}
+
+function detailModalHtml_(r){
+  if (!r) return '';
+  const dd = ageDays(r.date);
+  const ageLabel = dd === null ? '\u2014' : dd === 0 ? 'today' : dd + (dd===1?' day ago':' days ago');
+  const dur = durationCache[r.link] === undefined ? '\u2026' : durationCache[r.link];
+  const sel = state.selected.has(r.link);
+  return `
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box" id="modalBox">
+      <div class="panel-inner" style="clip-path:polygon(21px 0,100% 0,100% calc(100% - 21px),calc(100% - 21px) 100%,0 100%,0 21px);">
+        <div class="titlebar">
+          <div class="close-btn" id="closeModal">&#10005;</div>
+          <div class="hatch-v"></div>
+          <div class="titlebar-label">${esc(r.agent)}</div>
+          <div class="hatch-v"></div>
+          <div class="win-btn"><i></i></div>
+        </div>
+        <div class="modal-meta">
+          <div class="modal-badge" style="background:${gradeColor(r.grade)}">${esc(r.grade)||'\u2014'}</div>
+          <div class="modal-agebadge" style="background:${ageColor(dd)}">${ageLabel}</div>
+          <div class="modal-stat"><span>Duration</span><span>${dur}</span></div>
+          <div class="modal-stat"><span>Recorded</span><span>${esc(r.date)||'\u2014'}</span></div>
+          <div class="filler" style="height:14px;background:repeating-linear-gradient(90deg,#111 0 1px,transparent 1px 4px);opacity:.35;"></div>
+        </div>
+        <div class="modal-grid">
+          <div class="cell"><span>Industry</span><span>${esc(titleCase(r.ind))}</span></div>
+          <div class="cell"><span>Audience</span><span>${esc(r.aud)}</span></div>
+          <div class="cell wide"><span>Offer</span><span>${esc(titleCase(r.off))}</span></div>
+          <div class="cell wide note"><span>Note</span><span>${esc(r.note)||'\u2014'}</span></div>
+        </div>
+        <div class="modal-actions">
+          <a class="play" href="${esc(r.link)}" target="_blank" rel="noopener">&#9654; Play recording</a>
+          <button class="ghost" id="modalDownload">&#8595; Download</button>
+          <div class="filler"></div>
+          <button class="ghost" id="modalToggle">${sel ? '&#10003; In sample set' : '+ Add to set'}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function downloadModalHtml_(){
+  const dl = state.dl;
+  const pct = Math.round(dl.pct);
+  return `
+  <div class="dl-overlay">
+    <div class="dl-box">
+      <div class="dl-inner">
+        <div class="titlebar" style="height:28px;">
+          <div class="hatch-v"></div>
+          <div class="titlebar-label">${dl.done ? 'Complete' : 'Copying'}</div>
+          <div class="hatch-v"></div>
+        </div>
+        <div class="dl-bar">
+          <div class="dl-file-row">
+            <div class="dl-icon"></div>
+            <div class="dl-file-text">
+              <span>${esc(dl.file)}</span>
+              <span>${dl.done ? 'Saved to Downloads' : 'Copying from Google Drive\u2026'}</span>
+            </div>
+          </div>
+          <div class="dl-track"><div class="dl-fill" style="width:${pct}%;background:repeating-linear-gradient(115deg,#111 0 4px,transparent 4px 8px),${dl.done ? 'oklch(0.80 0.17 148)' : 'oklch(0.85 0.14 196)'};"></div></div>
+          <div class="dl-footer">
+            <span class="dl-pct">${pct}% of 1 item</span>
+            <button class="btn-clear" id="dlCancel">${dl.done ? 'OK' : 'Cancel'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderEmptyShell_(){
+  let msg;
+  if (LOAD_ERROR) {
+    msg = 'Could not load the shared sheet:\n' + esc(LOAD_ERROR);
+  } else if (LAST_DIAGNOSTIC && LAST_DIAGNOSTIC.rawRowCount > 1 && LAST_DIAGNOSTIC.parsedCount === 0) {
+    msg = 'Loaded ' + (LAST_DIAGNOSTIC.rawRowCount-1) + ' row(s), but none matched expected columns.\n\nHeader row found:\n' +
+      LAST_DIAGNOSTIC.headers.map((h,i) => (i+1)+'. "'+esc(h)+'"').join('\n');
+  } else if (LAST_DIAGNOSTIC && LAST_DIAGNOSTIC.rawRowCount <= 1) {
+    msg = 'The sheet loaded fine but has no submitted rows yet.';
   } else {
-    forPair.sort((a,b) => {
-      const ga = GRADE_RANK[a.grade] !== undefined ? GRADE_RANK[a.grade] : 9;
-      const gb = GRADE_RANK[b.grade] !== undefined ? GRADE_RANK[b.grade] : 9;
-      if (ga !== gb) return ga - gb;
-      return (b.date||'').localeCompare(a.date||'');
-    });
-
-    html += '<table><tr><th>offer</th><th>agent</th><th>grade</th><th>duration</th><th>age</th><th>link</th><th>summary</th></tr>';
-    forPair.forEach((r, i) => {
-      const age = ageDays(r.date);
-      const stale = age !== null && age >= AGE_ALERT_DAYS;
-      html += '<tr class="'+(stale?'stale':'')+'">'+
-        '<td>'+esc(titleCase(r.off))+'</td>'+
-        '<td>'+esc(r.agent||'\u2014')+'</td>'+
-        '<td>'+esc(r.grade||'\u2014')+'</td>'+
-        '<td id="dur'+i+'">\u2026</td>'+
-        '<td>'+(age===null?'\u2014':age+'d')+'</td>'+
-        '<td><a href="'+esc(r.link)+'" target="_blank" rel="noopener">open</a></td>'+
-        '<td>'+esc(r.note||'')+'</td>'+
-        '</tr>';
-    });
-    html += '</table>';
+    msg = 'Nothing logged yet.';
   }
-
-  $('view').innerHTML = html;
-  $('backBtn').addEventListener('click', () => { selected = null; render(); });
-  forPair.forEach((r, i) => { const cell = $('dur'+i); if (cell) getDuration_(r.link, cell); });
+  return `
+  <div class="panel">
+    <div class="panel-inner">
+      <div class="titlebar">
+        <div class="dot-box"><i></i></div>
+        <div class="hatch-v"></div>
+        <div class="titlebar-label">Best Calls</div>
+        <div class="hatch-v"></div>
+      </div>
+      <div class="empty-state err">${msg}</div>
+    </div>
+  </div>`;
 }
 
-$('q').addEventListener('input', render);
-$('view').innerHTML = '<div class="empty-msg">loading...</div>';
+function bindEvents_(rows){
+  const qEl = $('q');
+  if (qEl) qEl.addEventListener('input', e => { state.query = e.target.value; render(); });
+
+  document.querySelectorAll('.grade-chip').forEach(b => b.addEventListener('click', () => {
+    toggleIn_(state.grades, b.getAttribute('data-grade')); render();
+  }));
+  document.querySelectorAll('.ind-chip').forEach(b => b.addEventListener('click', () => {
+    toggleIn_(state.industries, b.getAttribute('data-ind')); render();
+  }));
+  document.querySelectorAll('.sortable').forEach(el => el.addEventListener('click', () => sortBy(el.getAttribute('data-sort'))));
+
+  const toggleAll = $('toggleAll');
+  if (toggleAll) toggleAll.addEventListener('click', () => {
+    const allSelected = rows.length > 0 && rows.every(r => state.selected.has(r.link));
+    if (allSelected) rows.forEach(r => state.selected.delete(r.link));
+    else rows.forEach(r => state.selected.add(r.link));
+    render();
+  });
+
+  document.querySelectorAll('[data-toggle]').forEach(el => el.addEventListener('click', e => {
+    e.stopPropagation();
+    const link = el.getAttribute('data-toggle');
+    if (state.selected.has(link)) state.selected.delete(link); else state.selected.add(link);
+    render();
+  }));
+
+  document.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', () => {
+    state.openLink = el.getAttribute('data-open'); render();
+  }));
+
+  document.querySelectorAll('[data-download]').forEach(el => el.addEventListener('click', e => {
+    e.stopPropagation();
+    const link = el.getAttribute('data-download');
+    const r = SOURCE_ROWS.find(x => x.link === link);
+    if (r) startDownload(r);
+  }));
+
+  document.querySelectorAll('[data-remove]').forEach(el => el.addEventListener('click', () => {
+    state.selected.delete(el.getAttribute('data-remove')); render();
+  }));
+
+  const clearSel = $('clearSel');
+  if (clearSel) clearSel.addEventListener('click', () => { state.selected.clear(); render(); });
+
+  const shareSet = $('shareSet');
+  if (shareSet) shareSet.addEventListener('click', () => triggerShareDownloads(SOURCE_ROWS));
+
+  const overlay = $('modalOverlay');
+  if (overlay) overlay.addEventListener('click', () => { state.openLink = null; render(); });
+  const modalBox = $('modalBox');
+  if (modalBox) modalBox.addEventListener('click', e => e.stopPropagation());
+  const closeModal = $('closeModal');
+  if (closeModal) closeModal.addEventListener('click', () => { state.openLink = null; render(); });
+  const modalDownload = $('modalDownload');
+  if (modalDownload) modalDownload.addEventListener('click', () => {
+    const r = SOURCE_ROWS.find(x => x.link === state.openLink);
+    if (r) startDownload(r);
+  });
+  const modalToggle = $('modalToggle');
+  if (modalToggle) modalToggle.addEventListener('click', () => {
+    const link = state.openLink;
+    if (state.selected.has(link)) state.selected.delete(link); else state.selected.add(link);
+    render();
+  });
+
+  const dlCancel = $('dlCancel');
+  if (dlCancel) dlCancel.addEventListener('click', cancelDownload);
+}
+
+app.innerHTML = '<div class="empty-state">loading…</div>';
 loadFromSheet().then(render);
 </script>
 </body>
