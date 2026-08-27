@@ -816,7 +816,7 @@ const MAG_PATTERN = [
 ];
 
 const CELL = 3;
-const ARROW_CELL = 2; // arrow reads too large at the same scale as the others
+const ARROW_CELL = 1.3; // still reads too large at cell=2, sized closer to a native cursor now
 const BLACK_MAP = { K: '#111', W: '#fff' };
 const HAND_MAP = { K: '#111', W: '#fff', B: '#4328b7' };
 const ARROW_SVG = pixelSvg_(ARROW_PATTERN, ARROW_CELL, BLACK_MAP);
