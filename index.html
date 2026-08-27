@@ -154,9 +154,15 @@
   .dl-fill{height:100%;background:repeating-linear-gradient(115deg,#111 0 4px,transparent 4px 8px);animation:barShift 500ms linear infinite;transition:width 120ms linear}
   .dl-footer{display:flex;align-items:center;justify-content:space-between}
   .dl-pct{font-size:10px;letter-spacing:.12em;color:#666;font-variant-numeric:tabular-nums}
+
+  /* ======================= RETRO PIXEL CURSOR ======================= */
+  *{cursor:none}
+  .pixel-cursor{position:fixed;top:0;left:0;pointer-events:none;z-index:99999;will-change:transform}
+  .pixel-cursor svg{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 </style>
 </head>
 <body>
+<div class="pixel-cursor" id="pixelCursor"></div>
 <div class="wrap">
 
   <div class="topbar">
@@ -334,20 +340,34 @@ function sortBy(key){
 function startDownload(r){
   clearInterval(window.__dlTimer); clearTimeout(window.__dlTimer2);
   state.dl = { link: r.link, file: fileName(r), pct: 0, done: false };
-  render();
+  render(); // mount — this is the only tick allowed to replay the pop-in animation
   window.__dlTimer = setInterval(() => {
     if (!state.dl) return;
     const next = Math.min(100, state.dl.pct + 3 + Math.random()*11);
     if (next >= 100) {
       clearInterval(window.__dlTimer);
       state.dl.pct = 100; state.dl.done = true;
-      render();
-      window.__dlTimer2 = setTimeout(() => { state.dl = null; render(); }, 1100);
+      updateDownloadModal_(); // in-place update, no re-mount
+      window.__dlTimer2 = setTimeout(() => { state.dl = null; render(); }, 1100); // unmount
     } else {
       state.dl.pct = next;
-      render();
+      updateDownloadModal_(); // in-place update, no re-mount
     }
   }, 110);
+}
+function updateDownloadModal_(){
+  if (!state.dl) return;
+  const pct = Math.round(state.dl.pct);
+  const fill = document.getElementById('dlFill');
+  if (fill) fill.style.cssText = 'height:100%;width:' + pct + '%;background:repeating-linear-gradient(115deg,#111 0 4px,transparent 4px 8px),' + (state.dl.done ? 'oklch(0.80 0.17 148)' : 'oklch(0.85 0.14 196)') + ';animation:barShift 500ms linear infinite;transition:width 120ms linear;';
+  const pctText = document.getElementById('dlPctText');
+  if (pctText) pctText.textContent = pct + '% of 1 item';
+  const title = document.getElementById('dlTitleText');
+  if (title) title.textContent = state.dl.done ? 'Complete' : 'Copying';
+  const status = document.getElementById('dlStatusText');
+  if (status) status.textContent = state.dl.done ? 'Saved to Downloads' : 'Copying from Google Drive\u2026';
+  const btn = document.getElementById('dlCancel');
+  if (btn) btn.textContent = state.dl.done ? 'OK' : 'Cancel';
 }
 function cancelDownload(){
   clearInterval(window.__dlTimer); clearTimeout(window.__dlTimer2);
@@ -573,7 +593,7 @@ function downloadModalHtml_(){
       <div class="dl-inner">
         <div class="titlebar" style="height:28px;">
           <div class="hatch-v"></div>
-          <div class="titlebar-label">${dl.done ? 'Complete' : 'Copying'}</div>
+          <div class="titlebar-label" id="dlTitleText">${dl.done ? 'Complete' : 'Copying'}</div>
           <div class="hatch-v"></div>
         </div>
         <div class="dl-bar">
@@ -581,12 +601,12 @@ function downloadModalHtml_(){
             <div class="dl-icon"></div>
             <div class="dl-file-text">
               <span>${esc(dl.file)}</span>
-              <span>${dl.done ? 'Saved to Downloads' : 'Copying from Google Drive\u2026'}</span>
+              <span id="dlStatusText">${dl.done ? 'Saved to Downloads' : 'Copying from Google Drive\u2026'}</span>
             </div>
           </div>
-          <div class="dl-track"><div class="dl-fill" style="width:${pct}%;background:repeating-linear-gradient(115deg,#111 0 4px,transparent 4px 8px),${dl.done ? 'oklch(0.80 0.17 148)' : 'oklch(0.85 0.14 196)'};"></div></div>
+          <div class="dl-track"><div class="dl-fill" id="dlFill" style="width:${pct}%;background:repeating-linear-gradient(115deg,#111 0 4px,transparent 4px 8px),${dl.done ? 'oklch(0.80 0.17 148)' : 'oklch(0.85 0.14 196)'};"></div></div>
           <div class="dl-footer">
-            <span class="dl-pct">${pct}% of 1 item</span>
+            <span class="dl-pct" id="dlPctText">${pct}% of 1 item</span>
             <button class="btn-clear" id="dlCancel">${dl.done ? 'OK' : 'Cancel'}</button>
           </div>
         </div>
@@ -693,6 +713,112 @@ function bindEvents_(rows){
 
 app.innerHTML = '<div class="empty-state">loading…</div>';
 loadFromSheet().then(render);
+
+/* ======================= RETRO PIXEL CURSOR ======================= */
+// Pure pixel-grid SVGs (no image files) so it matches the ink-black
+// neo-brutalist look. '#' = filled pixel, '.' = transparent.
+function pixelSvg_(pattern, cell){
+  const rows = pattern.length;
+  const cols = Math.max.apply(null, pattern.map(r => r.length));
+  let rects = '';
+  pattern.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++){
+      if (row[x] === '#') rects += '<rect x="'+(x*cell)+'" y="'+(y*cell)+'" width="'+cell+'" height="'+cell+'"/>';
+    }
+  });
+  const w = cols*cell, h = rows*cell;
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" fill="#111">'+rects+'</svg>';
+}
+
+const ARROW_PATTERN = [
+  '#...........',
+  '##..........',
+  '###.........',
+  '####........',
+  '#####.......',
+  '######......',
+  '#######.....',
+  '########....',
+  '#####.......',
+  '##.##.......',
+  '#..##.......',
+  '....##......',
+  '....##......',
+  '.....##.....',
+  '.....##.....',
+  '......#.....',
+];
+// Two-frame pointing glove — index finger shifts down a row between frames
+// to read as a little tap/flex while hovering something clickable.
+const GLOVE_FRAME_A = [
+  '....##......',
+  '...#..#.....',
+  '...#..#.....',
+  '...#..#.....',
+  '..##..##....',
+  '.#..####....',
+  '#.#.#..#....',
+  '#..#...#....',
+  '.#......#...',
+  '.#......#...',
+  '..#......#..',
+  '..########..',
+];
+const GLOVE_FRAME_B = [
+  '............',
+  '....##......',
+  '...#..#.....',
+  '...#..#.....',
+  '..##..##....',
+  '.#..####....',
+  '#.#.#..#....',
+  '#..#...#....',
+  '.#......#...',
+  '.#......#...',
+  '..#......#..',
+  '..########..',
+];
+
+const CELL = 3;
+const ARROW_SVG = pixelSvg_(ARROW_PATTERN, CELL);
+const GLOVE_SVGS = [pixelSvg_(GLOVE_FRAME_A, CELL), pixelSvg_(GLOVE_FRAME_B, CELL)];
+const INTERACTIVE_SELECTOR = 'button, a, input, select, textarea, .chip, .checkbox-box, ' +
+  '[data-open], [data-toggle], [data-download], [data-remove]';
+
+(function initPixelCursor(){
+  const el = document.getElementById('pixelCursor');
+  if (!el) return;
+  el.innerHTML = ARROW_SVG;
+  let hovering = false;
+  let animTimer = null;
+  let frame = 0;
+
+  function startHoverAnim(){
+    if (animTimer) return;
+    frame = 0;
+    el.innerHTML = GLOVE_SVGS[frame];
+    animTimer = setInterval(() => {
+      frame = 1 - frame;
+      el.innerHTML = GLOVE_SVGS[frame];
+    }, 220);
+  }
+  function stopHoverAnim(){
+    clearInterval(animTimer); animTimer = null;
+    el.innerHTML = ARROW_SVG;
+  }
+
+  document.addEventListener('mousemove', e => {
+    el.style.transform = 'translate(' + e.clientX + 'px,' + e.clientY + 'px)';
+    // pointer-events:none on the cursor itself, so this always finds the
+    // real element underneath rather than the cursor overlay
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const isHover = !!(target && target.closest(INTERACTIVE_SELECTOR));
+    if (isHover && !hovering) { hovering = true; startHoverAnim(); }
+    else if (!isHover && hovering) { hovering = false; stopHoverAnim(); }
+  });
+  document.addEventListener('mouseleave', () => { el.style.display = 'none'; });
+  document.addEventListener('mouseenter', () => { el.style.display = 'block'; });
+})();
 </script>
 </body>
 </html>
