@@ -129,6 +129,9 @@
   .modal-stat{display:flex;flex-direction:column;gap:2px}
   .modal-stat span:first-child{font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
   .modal-stat span:last-child{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+  .wave-box{flex:1;height:32px;display:flex;align-items:flex-end;gap:2px;min-width:60px}
+  .wave-bar{flex:1;min-width:2px;background:#111;transform-origin:bottom;animation:wavePulse 1.6s ease-in-out infinite;border-radius:.5px}
+  @keyframes wavePulse{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.55)}}
   .modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#e2e2e2;border-bottom:2px solid #111}
   .modal-grid .cell{background:#fff;padding:14px 16px;display:flex;flex-direction:column;gap:5px}
   .modal-grid .cell.wide{grid-column:span 2}
@@ -331,6 +334,80 @@ function sortBy(key){
   render();
 }
 
+/* ======================= WAVEFORM ============================== */
+// Tries to draw a real waveform from the actual audio (Web Audio decode of
+// a fetch()'d ArrayBuffer). Google Drive's direct-content URLs generally
+// don't send CORS headers for fetch/XHR the way they allow plain <audio>
+// playback, so this fails for most files — in that case we fall back to a
+// deterministic decorative waveform seeded from the file's own link, so a
+// given call always renders the same "fake" shape rather than a new
+// random one every time the modal opens.
+const WAVE_BARS = 40;
+const waveformCache = {}; // link -> number[] (0..1, length WAVE_BARS)
+let __audioCtx;
+function getAudioCtx_(){
+  if (!__audioCtx) __audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return __audioCtx;
+}
+function hashStr_(s){
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h*31 + s.charCodeAt(i)) | 0;
+  return h >>> 0;
+}
+function mulberry32_(seed){
+  return function(){
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = (t + Math.imul(t ^ t >>> 7, 61 | t)) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function decorativeWaveform_(seedStr, n){
+  const rand = mulberry32_(hashStr_(seedStr));
+  const out = [];
+  let v = 0.45;
+  for (let i = 0; i < n; i++){
+    v += (rand() - 0.5) * 0.4;
+    v = Math.max(0.08, Math.min(1, v));
+    out.push(v);
+  }
+  return out;
+}
+async function analyzeWaveform_(link, n){
+  const direct = driveDirectUrl_(link);
+  if (!direct) throw new Error('no direct url');
+  const resp = await fetch(direct, { mode: 'cors' });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const buf = await resp.arrayBuffer();
+  const audioBuf = await getAudioCtx_().decodeAudioData(buf);
+  const data = audioBuf.getChannelData(0);
+  const blockSize = Math.max(1, Math.floor(data.length / n));
+  const out = [];
+  for (let i = 0; i < n; i++){
+    let sum = 0;
+    const start = i * blockSize;
+    for (let j = 0; j < blockSize; j++){ const v = data[start+j] || 0; sum += v*v; }
+    out.push(Math.sqrt(sum / blockSize));
+  }
+  const max = Math.max.apply(null, out.concat([0.0001]));
+  return out.map(v => Math.max(0.06, v / max));
+}
+function getWaveform_(r, onReady){
+  if (waveformCache[r.link]) { onReady(waveformCache[r.link]); return; }
+  analyzeWaveform_(r.link, WAVE_BARS)
+    .then(vals => { waveformCache[r.link] = vals; onReady(vals); })
+    .catch(() => { const vals = decorativeWaveform_(r.link, WAVE_BARS); waveformCache[r.link] = vals; onReady(vals); });
+}
+function waveformBarsHtml_(vals){
+  if (!vals) {
+    // loading placeholder — same idle animation, flat until real data lands
+    return Array.from({length: WAVE_BARS}).map((_, i) =>
+      '<div class="wave-bar" style="height:6px;animation-delay:'+(i*0.03)+'s;opacity:.25"></div>').join('');
+  }
+  return vals.map((v, i) =>
+    '<div class="wave-bar" style="height:'+Math.round(v*28)+'px;animation-delay:'+(i*0.03)+'s"></div>').join('');
+}
+
 function downloadRealFile_(r){
   const direct = driveDirectUrl_(r.link);
   if (!direct) return;
@@ -344,7 +421,7 @@ function downloadRealFile_(r){
 
 function startDownload(r){
   clearInterval(window.__dlTimer); clearTimeout(window.__dlTimer2);
-  state.dl = { link: r.link, file: fileName(r), pct: 0, done: false };
+  state.dl = { file: fileName(r), pct: 0, done: false, count: 1 };
   render(); // mount — this is the only tick allowed to replay the pop-in animation
   window.__dlTimer = setInterval(() => {
     if (!state.dl) return;
@@ -361,13 +438,42 @@ function startDownload(r){
     }
   }, 110);
 }
+
+// Same modal/animation, but for the whole "sample set" at once — completes
+// a bit slower since it's standing in for N files, then fires every real
+// download staggered so the browser doesn't flag it as a download flood.
+function startBatchDownload(items){
+  if (!items.length) return;
+  clearInterval(window.__dlTimer); clearTimeout(window.__dlTimer2);
+  const label = items.length + ' selected call' + (items.length===1?'':'s');
+  state.dl = { file: label, pct: 0, done: false, count: items.length };
+  render();
+  const perTick = Math.max(1, 8 - Math.min(6, items.length)); // more items → slower fill
+  window.__dlTimer = setInterval(() => {
+    if (!state.dl) return;
+    const next = Math.min(100, state.dl.pct + perTick + Math.random()*6);
+    if (next >= 100) {
+      clearInterval(window.__dlTimer);
+      state.dl.pct = 100; state.dl.done = true;
+      updateDownloadModal_();
+      items.forEach((r, i) => {
+        setTimeout(() => downloadRealFile_(r), i * 350); // stagger — browsers flag rapid multi-downloads
+      });
+      window.__dlTimer2 = setTimeout(() => { state.dl = null; render(); }, 1300);
+    } else {
+      state.dl.pct = next;
+      updateDownloadModal_();
+    }
+  }, 110);
+}
+
 function updateDownloadModal_(){
   if (!state.dl) return;
   const pct = Math.round(state.dl.pct);
   const fill = document.getElementById('dlFill');
   if (fill) fill.style.cssText = 'height:100%;width:' + pct + '%;background:repeating-linear-gradient(115deg,#111 0 4px,transparent 4px 8px),' + (state.dl.done ? 'oklch(0.80 0.17 148)' : 'oklch(0.85 0.14 196)') + ';animation:barShift 500ms linear infinite;transition:width 120ms linear;';
   const pctText = document.getElementById('dlPctText');
-  if (pctText) pctText.textContent = pct + '% of 1 item';
+  if (pctText) pctText.textContent = pct + '% of ' + state.dl.count + ' item' + (state.dl.count===1?'':'s');
   const title = document.getElementById('dlTitleText');
   if (title) title.textContent = state.dl.done ? 'Complete' : 'Copying';
   const status = document.getElementById('dlStatusText');
@@ -378,22 +484,6 @@ function updateDownloadModal_(){
 function cancelDownload(){
   clearInterval(window.__dlTimer); clearTimeout(window.__dlTimer2);
   state.dl = null; render();
-}
-
-function triggerShareDownloads(rows){
-  const items = rows.filter(r => state.selected.has(r.link));
-  items.forEach((r, i) => {
-    setTimeout(() => {
-      const direct = driveDirectUrl_(r.link);
-      if (!direct) return;
-      const a = document.createElement('a');
-      a.href = direct;
-      a.download = fileName(r);
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }, i * 350); // stagger slightly — browsers can flag rapid multi-downloads from one click
-  });
 }
 
 /* ======================= RENDER ============================== */
@@ -526,6 +616,19 @@ function render(){
       });
     }
   });
+
+  // kick off waveform analysis for the open detail modal, if not cached —
+  // updates the bars in place so it doesn't retrigger the modal's pop-in
+  if (state.openLink && !waveformCache[state.openLink]) {
+    const openRow = SOURCE_ROWS.find(x => x.link === state.openLink);
+    if (openRow) {
+      getWaveform_(openRow, vals => {
+        if (state.openLink !== openRow.link) return; // modal moved on, don't clobber
+        const box = document.getElementById('waveBox');
+        if (box) box.innerHTML = waveformBarsHtml_(vals);
+      });
+    }
+  }
 }
 
 function arrow_(key){
@@ -571,7 +674,7 @@ function detailModalHtml_(r){
           <div class="modal-agebadge" style="background:${ageColor(dd)}">${ageLabel}</div>
           <div class="modal-stat"><span>Duration</span><span>${dur}</span></div>
           <div class="modal-stat"><span>Recorded</span><span>${esc(r.date)||'\u2014'}</span></div>
-          <div class="filler" style="height:14px;background:repeating-linear-gradient(90deg,#111 0 1px,transparent 1px 4px);opacity:.35;"></div>
+          <div class="wave-box" id="waveBox">${waveformBarsHtml_(waveformCache[r.link])}</div>
         </div>
         <div class="modal-grid">
           <div class="cell"><span>Industry</span><span>${esc(titleCase(r.ind))}</span></div>
@@ -693,7 +796,10 @@ function bindEvents_(rows){
   if (clearSel) clearSel.addEventListener('click', () => { state.selected.clear(); render(); });
 
   const shareSet = $('shareSet');
-  if (shareSet) shareSet.addEventListener('click', () => triggerShareDownloads(SOURCE_ROWS));
+  if (shareSet) shareSet.addEventListener('click', () => {
+    const items = SOURCE_ROWS.filter(r => state.selected.has(r.link));
+    startBatchDownload(items);
+  });
 
   const overlay = $('modalOverlay');
   if (overlay) overlay.addEventListener('click', () => { state.openLink = null; render(); });
