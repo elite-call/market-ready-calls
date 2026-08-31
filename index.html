@@ -207,10 +207,12 @@ function csvRowsToRecords(rows){
   const header = rows[0].map(h => h.toLowerCase());
   const idx = word => header.findIndex(h => h.indexOf(word) >= 0);
   const col = { logged_at: 0, link: idx('link'), agent: idx('agent'), date: idx('date'),
-    ind: idx('industry'), aud: idx('audience'), off: idx('offer'), grade: idx('grade'), note: idx('note') };
+    ind: idx('industry'), aud: idx('audience'), off: idx('offer'), grade: idx('grade'), note: idx('note'),
+    duration: idx('duration'), rationale: idx('rationale') };
   return rows.slice(1).map(r => ({
     logged_at: r[col.logged_at]||'', link: r[col.link]||'', agent: r[col.agent]||'', date: r[col.date]||'',
     ind: r[col.ind]||'', aud: r[col.aud]||'', off: r[col.off]||'', grade: r[col.grade]||'', note: r[col.note]||'',
+    duration: r[col.duration]||'', rationale: r[col.rationale]||'',
   })).filter(r => r.link);
 }
 
@@ -235,34 +237,23 @@ let SOURCE_ROWS = [];
 let LOAD_ERROR = null;
 let LAST_DIAGNOSTIC = null;
 
-/* ======================= LIVE DURATION LOOKUP ============================== */
+/* ======================= DRIVE DIRECT LINK (for downloads only) ============
+   Duration used to be fetched live from this URL via an <audio> tag, but
+   Drive blocks exactly that kind of background/embedded request (anti-
+   hotlink protection) regardless of sharing settings or endpoint used —
+   confirmed by testing, not a guess. Duration is now captured once, locally,
+   when the call is logged (see sample-log.html), and comes from the sheet
+   like everything else. This URL is still used for real downloads, which
+   Drive does allow. */
 function driveDirectUrl_(shareLink){
   const m = String(shareLink||'').match(/\/d\/([a-zA-Z0-9_-]+)/) || String(shareLink||'').match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if (!m) return null;
-  // drive.google.com/uc?export=download is being sunset by Google and
-  // increasingly 404s ("no data found with given identifier") on files
-  // that are otherwise valid and shared — usercontent.google.com is the
-  // current replacement endpoint.
   return 'https://drive.usercontent.google.com/download?id=' + m[1] + '&export=download&authuser=0';
 }
-const durationCache = {};   // link -> "3:42" | "—"
-const durationSeconds = {}; // link -> number | undefined
-function getDuration_(link, onLoaded){
-  const direct = driveDirectUrl_(link);
-  if (!direct) { durationCache[link] = '\u2014'; return; }
-  if (durationCache[link] !== undefined) return;
-  const audio = document.createElement('audio');
-  audio.preload = 'metadata';
-  audio.referrerPolicy = 'no-referrer'; // Drive 403s uc?export=download when it sees a foreign Referer
-  audio.src = direct;
-  audio.addEventListener('loadedmetadata', () => {
-    const s = Math.round(audio.duration);
-    const fmt = isFinite(s) ? Math.floor(s/60) + ':' + String(s%60).padStart(2,'0') : '\u2014';
-    durationCache[link] = fmt;
-    if (isFinite(s)) durationSeconds[link] = s;
-    if (onLoaded) onLoaded();
-  });
-  audio.addEventListener('error', () => { durationCache[link] = '\u2014'; if (onLoaded) onLoaded(); });
+function fmtDur_(s){
+  if (s === null || s === undefined || s === '' || isNaN(Number(s))) return null;
+  const n = Math.round(Number(s));
+  return Math.floor(n/60) + ':' + String(n%60).padStart(2,'0');
 }
 
 function loadFromSheet(){
@@ -345,20 +336,14 @@ function sortBy(key){
 }
 
 /* ======================= WAVEFORM ============================== */
-// Tries to draw a real waveform from the actual audio (Web Audio decode of
-// a fetch()'d ArrayBuffer). Google Drive's direct-content URLs generally
-// don't send CORS headers for fetch/XHR the way they allow plain <audio>
-// playback, so this fails for most files — in that case we fall back to a
-// deterministic decorative waveform seeded from the file's own link, so a
-// given call always renders the same "fake" shape rather than a new
-// random one every time the modal opens.
+// Real audio analysis (Web Audio decode of a fetch()'d ArrayBuffer) hit the
+// same Drive anti-hotlink wall as live duration lookup did — confirmed via
+// testing, not worth re-attempting per-call. This is always the decorative
+// version: a deterministic waveform seeded from the file's own link, so a
+// given call always renders the same "fake" shape rather than a new random
+// one every time the modal opens.
 const WAVE_BARS = 40;
 const waveformCache = {}; // link -> number[] (0..1, length WAVE_BARS)
-let __audioCtx;
-function getAudioCtx_(){
-  if (!__audioCtx) __audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  return __audioCtx;
-}
 function hashStr_(s){
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h*31 + s.charCodeAt(i)) | 0;
@@ -383,37 +368,11 @@ function decorativeWaveform_(seedStr, n){
   }
   return out;
 }
-async function analyzeWaveform_(link, n){
-  const direct = driveDirectUrl_(link);
-  if (!direct) throw new Error('no direct url');
-  const resp = await fetch(direct, { mode: 'cors', referrerPolicy: 'no-referrer' });
-  if (!resp.ok) throw new Error('HTTP ' + resp.status);
-  const buf = await resp.arrayBuffer();
-  const audioBuf = await getAudioCtx_().decodeAudioData(buf);
-  const data = audioBuf.getChannelData(0);
-  const blockSize = Math.max(1, Math.floor(data.length / n));
-  const out = [];
-  for (let i = 0; i < n; i++){
-    let sum = 0;
-    const start = i * blockSize;
-    for (let j = 0; j < blockSize; j++){ const v = data[start+j] || 0; sum += v*v; }
-    out.push(Math.sqrt(sum / blockSize));
-  }
-  const max = Math.max.apply(null, out.concat([0.0001]));
-  return out.map(v => Math.max(0.06, v / max));
-}
-function getWaveform_(r, onReady){
-  if (waveformCache[r.link]) { onReady(waveformCache[r.link]); return; }
-  analyzeWaveform_(r.link, WAVE_BARS)
-    .then(vals => { waveformCache[r.link] = vals; onReady(vals); })
-    .catch(() => { const vals = decorativeWaveform_(r.link, WAVE_BARS); waveformCache[r.link] = vals; onReady(vals); });
+function getWaveform_(r){
+  if (!waveformCache[r.link]) waveformCache[r.link] = decorativeWaveform_(r.link, WAVE_BARS);
+  return waveformCache[r.link];
 }
 function waveformBarsHtml_(vals){
-  if (!vals) {
-    // loading placeholder — same idle animation, flat until real data lands
-    return Array.from({length: WAVE_BARS}).map((_, i) =>
-      '<div class="wave-bar" style="height:6px;animation-delay:'+(i*0.03)+'s;opacity:.25"></div>').join('');
-  }
   return vals.map((v, i) =>
     '<div class="wave-bar" style="height:'+Math.round(v*28)+'px;animation-delay:'+(i*0.03)+'s"></div>').join('');
 }
@@ -520,7 +479,7 @@ function render(){
   rows = rows.slice().sort((a,b) => {
     let av, bv;
     if (state.sortKey === 'age') { av = ageDays(a.date) ?? 999999; bv = ageDays(b.date) ?? 999999; }
-    else if (state.sortKey === 'seconds') { av = durationSeconds[a.link] ?? -1; bv = durationSeconds[b.link] ?? -1; }
+    else if (state.sortKey === 'seconds') { av = Number(a.duration) || -1; bv = Number(b.duration) || -1; }
     else if (state.sortKey === 'grade') { av = GRADE_RANK[a.grade] ?? 999; bv = GRADE_RANK[b.grade] ?? 999; }
     else if (state.sortKey === 'agent') { av = a.agent.toLowerCase(); bv = b.agent.toLowerCase(); }
     else { av = a.ind.toLowerCase(); bv = b.ind.toLowerCase(); }
@@ -615,30 +574,6 @@ function render(){
     const el = $('q');
     if (el) { el.focus(); el.setSelectionRange(caret, caret); }
   }
-
-  // kick off duration lookups for any visible row missing a cached value
-  rows.forEach(r => {
-    if (durationCache[r.link] === undefined) {
-      getDuration_(r.link, () => {
-        const cell = document.querySelector('[data-dur="'+CSS.escape(r.link)+'"]');
-        if (cell) cell.textContent = durationCache[r.link];
-        if (state.sortKey === 'seconds') render();
-      });
-    }
-  });
-
-  // kick off waveform analysis for the open detail modal, if not cached —
-  // updates the bars in place so it doesn't retrigger the modal's pop-in
-  if (state.openLink && !waveformCache[state.openLink]) {
-    const openRow = SOURCE_ROWS.find(x => x.link === state.openLink);
-    if (openRow) {
-      getWaveform_(openRow, vals => {
-        if (state.openLink !== openRow.link) return; // modal moved on, don't clobber
-        const box = document.getElementById('waveBox');
-        if (box) box.innerHTML = waveformBarsHtml_(vals);
-      });
-    }
-  }
 }
 
 function arrow_(key){
@@ -648,14 +583,14 @@ function arrow_(key){
 function rowHtml_(r){
   const dd = ageDays(r.date);
   const sel = state.selected.has(r.link);
-  const dur = durationCache[r.link];
+  const dur = fmtDur_(r.duration);
   return `
   <div class="grid-row row${sel?' selected':''}" data-open="${esc(r.link)}">
     <div class="cell-check"><div class="checkbox-box${sel?' on':''}" data-toggle="${esc(r.link)}">${sel?'&#10003;':''}</div></div>
     <div class="cell-dl"><button class="dl-icon-btn" data-download="${esc(r.link)}" title="Download"><span>&#8595;</span></button></div>
-    <div><div class="badge" style="background:${gradeColor(r.grade)}">${esc(r.grade)||'\u2014'}</div></div>
+    <div><div class="badge" style="background:${gradeColor(r.grade)}" title="${esc(r.rationale)}">${esc(r.grade)||'\u2014'}</div></div>
     <div><div class="agebadge" style="background:${ageColor(dd)}">${dd===null?'\u2014':dd+'d'}</div></div>
-    <div class="cell-dur" data-dur="${esc(r.link)}">${dur === undefined ? '\u2026' : dur}</div>
+    <div class="cell-dur">${dur === null ? '\u2014' : dur}</div>
     <div class="cell-agent">${esc(r.agent)||'\u2014'}</div>
     <div class="cell-industry">${esc(titleCase(r.ind))}</div>
     <div class="cell-note">${esc(r.note)}</div>
@@ -666,7 +601,7 @@ function detailModalHtml_(r){
   if (!r) return '';
   const dd = ageDays(r.date);
   const ageLabel = dd === null ? '\u2014' : dd === 0 ? 'today' : dd + (dd===1?' day ago':' days ago');
-  const dur = durationCache[r.link] === undefined ? '\u2026' : durationCache[r.link];
+  const dur = fmtDur_(r.duration);
   const sel = state.selected.has(r.link);
   return `
   <div class="modal-overlay" id="modalOverlay">
@@ -680,17 +615,18 @@ function detailModalHtml_(r){
           <div class="win-btn"><i></i></div>
         </div>
         <div class="modal-meta">
-          <div class="modal-badge" style="background:${gradeColor(r.grade)}">${esc(r.grade)||'\u2014'}</div>
+          <div class="modal-badge" style="background:${gradeColor(r.grade)}" title="${esc(r.rationale)}">${esc(r.grade)||'\u2014'}</div>
           <div class="modal-agebadge" style="background:${ageColor(dd)}">${ageLabel}</div>
-          <div class="modal-stat"><span>Duration</span><span>${dur}</span></div>
+          <div class="modal-stat"><span>Duration</span><span>${dur === null ? '\u2014' : dur}</span></div>
           <div class="modal-stat"><span>Recorded</span><span>${esc(r.date)||'\u2014'}</span></div>
-          <div class="wave-box" id="waveBox">${waveformBarsHtml_(waveformCache[r.link])}</div>
+          <div class="wave-box" id="waveBox">${waveformBarsHtml_(getWaveform_(r))}</div>
         </div>
         <div class="modal-grid">
           <div class="cell"><span>Industry</span><span>${esc(titleCase(r.ind))}</span></div>
           <div class="cell"><span>Audience</span><span>${esc(r.aud)}</span></div>
           <div class="cell wide"><span>Offer</span><span>${esc(titleCase(r.off))}</span></div>
           <div class="cell wide note"><span>Note</span><span>${esc(r.note)||'\u2014'}</span></div>
+          ${r.rationale ? '<div class="cell wide note"><span>Grade rationale</span><span>'+esc(r.rationale)+'</span></div>' : ''}
         </div>
         <div class="modal-actions">
           <a class="play" href="${esc(r.link)}" target="_blank" rel="noopener">&#9654; Play recording</a>
