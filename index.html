@@ -72,7 +72,7 @@
   .filler{flex:1;min-width:20px}
   .hatch-h60{width:60px;height:14px;background:repeating-linear-gradient(90deg,#111 0 1px,transparent 1px 4px)}
 
-  .grid-row{display:grid;grid-template-columns:38px 44px 60px 60px 66px 1.2fr 1fr 2.4fr;align-items:center}
+  .grid-row{display:grid;grid-template-columns:38px 44px 60px 60px 66px 1.1fr .9fr .9fr 2fr;align-items:center}
   .table-header{background:#ededed;border-bottom:2px solid #111;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#444}
   .table-header > div{padding:9px 6px}
   .table-header .sortable{cursor:pointer}
@@ -317,6 +317,8 @@ const state = {
   query: '',
   grades: [],
   industries: [],
+  audiences: [],
+  offers: [],
   sortKey: 'age',
   sortDir: 'asc',
   selected: new Set(),
@@ -471,6 +473,8 @@ function render(){
   let rows = SOURCE_ROWS.filter(r => {
     if (state.grades.length && !state.grades.includes(r.grade)) return false;
     if (state.industries.length && !state.industries.includes(r.ind)) return false;
+    if (state.audiences.length && !state.audiences.includes(r.aud)) return false;
+    if (state.offers.length && !state.offers.includes(r.off)) return false;
     if (q && searchable(r).indexOf(q) < 0) return false;
     return true;
   });
@@ -487,6 +491,8 @@ function render(){
   });
 
   const industryList = Array.from(new Set(SOURCE_ROWS.map(r => r.ind))).filter(Boolean).sort();
+  const audienceList = Array.from(new Set(SOURCE_ROWS.map(r => r.aud))).filter(Boolean).sort();
+  const offerList = Array.from(new Set(SOURCE_ROWS.map(r => r.off))).filter(Boolean).sort();
 
   const html = `
   <div class="panel">
@@ -516,6 +522,16 @@ function render(){
           ${industryList.map(i => `<button class="chip ind-chip${state.industries.includes(i)?' active':''}" data-ind="${esc(i)}">${esc(titleCase(i))}</button>`).join('')}
         </div>
 
+        <div class="chip-group">
+          <span class="glabel">Audience</span>
+          ${audienceList.map(a => `<button class="chip aud-chip${state.audiences.includes(a)?' active':''}" data-aud="${esc(a)}">${esc(titleCase(a))}</button>`).join('')}
+        </div>
+
+        <div class="chip-group">
+          <span class="glabel">Offer</span>
+          ${offerList.map(o => `<button class="chip off-chip${state.offers.includes(o)?' active':''}" data-off="${esc(o)}">${esc(titleCase(o))}</button>`).join('')}
+        </div>
+
         <div class="filler"></div>
         <div class="hatch-h60"></div>
       </div>
@@ -528,6 +544,7 @@ function render(){
         <div class="sortable" data-sort="seconds">Len${arrow_('seconds')}</div>
         <div class="sortable" data-sort="agent">Agent${arrow_('agent')}</div>
         <div class="sortable" data-sort="industry">Industry${arrow_('industry')}</div>
+        <div>Audience</div>
         <div>Note</div>
       </div>
 
@@ -593,6 +610,7 @@ function rowHtml_(r){
     <div class="cell-dur">${dur === null ? '\u2014' : dur}</div>
     <div class="cell-agent">${esc(r.agent)||'\u2014'}</div>
     <div class="cell-industry">${esc(titleCase(r.ind))}</div>
+    <div class="cell-industry">${esc(titleCase(r.aud))}</div>
     <div class="cell-note">${esc(r.note)}</div>
   </div>`;
 }
@@ -705,6 +723,12 @@ function bindEvents_(rows){
   }));
   document.querySelectorAll('.ind-chip').forEach(b => b.addEventListener('click', () => {
     toggleIn_(state.industries, b.getAttribute('data-ind')); render();
+  }));
+  document.querySelectorAll('.aud-chip').forEach(b => b.addEventListener('click', () => {
+    toggleIn_(state.audiences, b.getAttribute('data-aud')); render();
+  }));
+  document.querySelectorAll('.off-chip').forEach(b => b.addEventListener('click', () => {
+    toggleIn_(state.offers, b.getAttribute('data-off')); render();
   }));
   document.querySelectorAll('.sortable').forEach(el => el.addEventListener('click', () => sortBy(el.getAttribute('data-sort'))));
 
